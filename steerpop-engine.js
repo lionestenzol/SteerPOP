@@ -282,6 +282,8 @@ export class SteerPopEngine {
     s.didCommitThisSession = false;
     s.sessionStartTime = p.timestamp;
     s.activeRow = hit.row;
+    s.homeRow = hit.row;       // remember starting row for home bias
+    s.hasLeftHome = false;     // track if user has visited another row
     s.swipeDirection = null;
 
     this._velocityBuffer = [{ x: p.x, y: p.y, t: p.timestamp }];
@@ -364,40 +366,52 @@ export class SteerPopEngine {
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
 
-    // Row switching: ray projection determines target row
-    // Extend the anchor→pointer ray to see which row it aims at.
-    // A short diagonal push toward another row is enough to switch,
-    // even if the raw Y displacement is small.
+    // Row switching with home row bias
+    // The home row (where the user first tapped) has gravity — the pointer
+    // snaps back to it when close, even if the angle is shallow.
     const rowSpacing = this._rowSpacing || 50;
     const anchorKey = this._keyById.get(s.anchorKey);
-    // Same-row bias: only consider row switching if the vertical component
-    // is at least 15% of horizontal (≈8.5° from horizontal). This prevents
-    // accidental row jumps from small vertical drift during horizontal slides,
-    // while still allowing shallow diagonals like E→L to cross rows.
-    const hasVerticalIntent = absDy > absDx * 0.15 && absDy > 3;
-    if (anchorKey && hasVerticalIntent) {
-      const maxRow = this._rowCenters.length > 0
-        ? this._rowCenters[this._rowCenters.length - 1].row : 2;
+    if (anchorKey) {
+      // Use ray projection to determine target row
+      const hasVerticalIntent = absDy > absDx * 0.15 && absDy > 3;
+      let newRow = s.activeRow;
 
-      // Find which row the ray from anchor through pointer would hit
-      // by checking each row center's Y position
-      let bestRow = anchorKey.row;
-      const anchorY = anchorKey.centerY;
-      for (const rc of this._rowCenters) {
-        if (rc.row === anchorKey.row) continue;
-        const rowY = rc.y;
-        // Does the ray point toward this row? (same sign of dy)
-        if ((rowY - anchorY) * dy <= 0) continue; // wrong direction
-        // Compute t: how far along the ray to reach this row
-        const t = (rowY - anchorY) / dy;
-        // The ray reaches this row — check it's a reasonable target
-        // (t > 0 means forward along the ray direction)
-        if (t > 0) {
-          bestRow = rc.row;
-          break; // take the first row in the ray's direction
+      if (hasVerticalIntent) {
+        const maxRow = this._rowCenters.length > 0
+          ? this._rowCenters[this._rowCenters.length - 1].row : 2;
+
+        let bestRow = anchorKey.row;
+        const anchorY = anchorKey.centerY;
+        for (const rc of this._rowCenters) {
+          if (rc.row === anchorKey.row) continue;
+          const rowY = rc.y;
+          if ((rowY - anchorY) * dy <= 0) continue;
+          const t = (rowY - anchorY) / dy;
+          if (t > 0) {
+            bestRow = rc.row;
+            break;
+          }
+        }
+        newRow = bestRow;
+      }
+
+      // Home row bias: once the user has left home and is returning,
+      // snap back to home row when pointer is close to it.
+      // Check BEFORE updating hasLeftHome so it only applies on return.
+      const homeRowCenter = this._rowCenters.find(rc => rc.row === s.homeRow);
+      if (s.hasLeftHome && homeRowCenter) {
+        const distToHome = Math.abs(p.y - homeRowCenter.y);
+        if (distToHome < rowSpacing * 0.6) {
+          newRow = s.homeRow;
         }
       }
-      s.activeRow = bestRow;
+
+      // Track if user has left home row (after applying bias)
+      if (newRow !== s.homeRow) {
+        s.hasLeftHome = true;
+      }
+
+      s.activeRow = newRow;
     }
 
     // Determine swipe direction
