@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SteerPop — Interaction Demo</title>
+<style>
+  /* ============================================================
+     RESET & VARIABLES
+  ============================================================ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #0a0b0e;
+    --surface:    #111318;
+    --border:     #1e2130;
+    --key-bg:     #161923;
+    --key-border: #252c3d;
+    --key-hover:  #1d2435;
+    --text:       #c8d0e0;
+    --muted:      #4a5068;
+    --accent:     #00c6ff;
+    --accent2:    #7b5cff;
+    --commit:     #00ffa3;
+    --danger:     #ff4d6d;
+    --pop-ring:   rgba(0,198,255,0.15);
+    --glow:       0 0 16px rgba(0,198,255,0.5);
+    --font-mono:  'Courier New', monospace;
+    --font-ui:    'Trebuchet MS', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 48px;
+    user-select: none;
+    cursor: crosshair;
+  }
+
+  /* ============================================================
+     HEADER
+  ============================================================ */
+  .header {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  .header h1 {
+    font-size: 1.8rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .header p {
+    color: var(--muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    margin-top: 4px;
+    text-transform: uppercase;
+  }
+
+  /* ============================================================
+     TEXT OUTPUT
+  ============================================================ */
+  .output-area {
+    width: 100%;
+    max-width: 760px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .output-label {
+    color: var(--muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  #output-text {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    color: var(--accent);
+    min-height: 28px;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 2px;
+  }
+  #output-text::after {
+    content: '▍';
+    animation: blink 1s step-end infinite;
+    color: var(--accent2);
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .btn-clear {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .btn-clear:hover { border-color: var(--danger); color: var(--danger); }
+
+  /* ============================================================
+     MAIN LAYOUT
+  ============================================================ */
+  .main-layout {
+    width: 100%;
+    max-width: 960px;
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: 20px;
+    align-items: start;
+  }
+
+  /* ============================================================
+     KEYBOARD CONTAINER (holds canvas + keyboard)
+  ============================================================ */
+  .keyboard-wrap {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 16px 20px;
+    overflow: hidden; /* clip halo bubbles */
+  }
+
+  /* ============================================================
+     KEYBOARD ROWS
+  ============================================================ */
+  .kb-row {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .key {
+    width: 52px;
+    height: 52px;
+    background: var(--key-bg);
+    border: 1px solid var(--key-border);
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text);
+    cursor: crosshair;
+    position: relative;
+    z-index: 1;
+    transition: background 0.1s, border-color 0.1s;
+    /* Prevent default drag behavior */
+    -webkit-user-drag: none;
+  }
+  .key:hover { background: var(--key-hover); }
+  .key.anchor-active {
+    background: rgba(0,198,255,0.12);
+    border-color: var(--accent);
+    box-shadow: 0 0 12px rgba(0,198,255,0.3);
+    color: var(--accent);
+  }
+
+  /* ============================================================
+     HALO OVERLAY CANVAS (positioned over keyboard)
+  ============================================================ */
+  #halo-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none; /* pass-through for mouse events */
+    z-index: 10;
+  }
+
+  /* ============================================================
+     SIDE PANEL
+  ============================================================ */
+  .side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .panel-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel-title {
+    font-size: 0.65rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  /* Controls */
+  .ctrl-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .ctrl-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ctrl-item label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+  .ctrl-item label span {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(0,198,255,0.5);
+  }
+
+  /* Toggle switches */
+  .toggle-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .toggle-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+  .switch {
+    position: relative;
+    width: 32px; height: 17px;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider-sw {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 17px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .slider-sw::before {
+    content: '';
+    position: absolute;
+    width: 11px; height: 11px;
+    left: 3px; top: 3px;
+    background: var(--muted);
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .switch input:checked + .slider-sw { background: rgba(0,198,255,0.3); }
+  .switch input:checked + .slider-sw::before {
+    transform: translateX(15px);
+    background: var(--accent);
+  }
+
+  /* Debug panel */
+  .debug-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .debug-cell {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 7px 10px;
+  }
+  .debug-cell .d-label {
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+  .debug-cell .d-value {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .d-value.highlight { color: var(--accent); }
+  .d-value.pop-met   { color: var(--commit); }
+  .d-value.pop-nope  { color: var(--muted); }
+
+  /* ============================================================
+     POP FLASH OVERLAY (full-screen flash on commit)
+  ============================================================ */
+  #commit-flash {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background: var(--commit);
+    opacity: 0;
+    transition: opacity 0.08s;
+  }
+  #commit-flash.flash { opacity: 0.07; }
+</style>
+</head>
+<body>
+
+<!-- commit flash overlay -->
+<div id="commit-flash"></div>
+
+<!-- ============================================================
+     HEADER
+============================================================ -->
+<div class="header">
+  <h1>SteerPop</h1>
+  <p>Anchor · Steer · Pop — Interaction Prototype v0.1</p>
+</div>
+
+<!-- ============================================================
+     TEXT OUTPUT
+============================================================ -->
+<div class="output-area">
+  <div class="output-label">Output</div>
+  <div id="output-text"></div>
+  <button class="btn-clear" id="btn-clear">Clear</button>
+</div>
+
+<!-- ============================================================
+     MAIN LAYOUT
+============================================================ -->
+<div class="main-layout">
+
+  <!-- KEYBOARD + CANVAS WRAPPER -->
+  <div class="keyboard-wrap" id="keyboard-wrap">
+    <!-- Canvas drawn on top via JS; keys rendered below -->
+    <canvas id="halo-canvas"></canvas>
+
+    <!-- QWERTY rows -->
+    <div class="kb-row" id="row-0"></div>
+    <div class="kb-row" id="row-1"></div>
+    <div class="kb-row" id="row-2"></div>
+  </div>
+
+  <!-- SIDE PANEL -->
+  <div class="side-panel">
+
+    <!-- Controls -->
+    <div class="panel-card">
+      <div class="panel-title">Controls</div>
+      <div class="ctrl-row">
+
+        <div class="ctrl-item">
+          <label>Bubble Size <span id="lbl-bubble">38</span></label>
+          <input type="range" id="ctrl-bubble" min="24" max="60" value="38" />
+        </div>
+
+        <div class="ctrl-item">
+          <label>Candidate Count <span id="lbl-candidates">8</span></label>
+          <input type="range" id="ctrl-candidates" min="4" max="12" value="8" />
+        </div>
+
+        <div class="ctrl-item">
+          <label>Hysteresis <span id="lbl-hysteresis">0.4</span></label>
+          <input type="range" id="ctrl-hysteresis" min="0.1" max="0.9" step="0.05" value="0.4" />
+        </div>
+
+        <div class="ctrl-item">
+          <label>Pop Radius <span id="lbl-popradius">70</span>px</label>
+          <input type="range" id="ctrl-popradius" min="30" max="150" value="70" />
+        </div>
+
+        <div class="ctrl-item">
+          <label>Pop Sensitivity <span id="lbl-popsens">0.6</span></label>
+          <input type="range" id="ctrl-popsens" min="0.2" max="1.0" step="0.05" value="0.6" />
+        </div>
+
+      </div>
+
+      <div class="toggle-row" style="margin-top:14px;">
+        <div class="toggle-item">
+          Show Halo
+          <label class="switch">
+            <input type="checkbox" id="tog-halo" checked />
+            <span class="slider-sw"></span>
+          </label>
+        </div>
+        <div class="toggle-item">
+          Show Pop Ring
+          <label class="switch">
+            <input type="checkbox" id="tog-ring" checked />
+            <span class="slider-sw"></span>
+          </label>
+        </div>
+        <div class="toggle-item">
+          Debug Labels
+          <label class="switch">
+            <input type="checkbox" id="tog-debug-labels" checked />
+            <span class="slider-sw"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug panel -->
+    <div class="panel-card">
+      <div class="panel-title">Debug</div>
+      <div class="debug-grid">
+        <div class="debug-cell">
+          <div class="d-label">Anchor</div>
+          <div class="d-value highlight" id="dbg-anchor">—</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Target</div>
+          <div class="d-value highlight" id="dbg-target">—</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Distance</div>
+          <div class="d-value" id="dbg-dist">0 px</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Pop Met?</div>
+          <div class="d-value pop-nope" id="dbg-pop">NO</div>
+        </div>
+        <div class="debug-cell" style="grid-column:1/-1;">
+          <div class="d-label">Last Commit</div>
+          <div class="d-value pop-met" id="dbg-last">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hint -->
+    <div class="panel-card" style="font-size:0.72rem; color:var(--muted); line-height:1.7; letter-spacing:0.03em;">
+      <strong style="color:var(--text); display:block; margin-bottom:6px;">How to use</strong>
+      1. <strong style="color:var(--text);">Press &amp; hold</strong> any key to anchor.<br/>
+      2. <strong style="color:var(--text);">Move</strong> the mouse — nearby keys appear as bubbles.<br/>
+      3. <strong style="color:var(--text);">Drift past</strong> the pop radius to commit the highlighted key.<br/>
+      4. <strong style="color:var(--text);">Stay held down</strong> to keep typing without releasing.<br/>
+      5. <strong style="color:var(--text);">Release</strong> to end the session.
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   SECTION 1 — KEYBOARD LAYOUT
+   Defines the QWERTY rows and builds DOM key elements.
+   Each key stores its grid position for spatial scoring.
+============================================================ */
+
+const ROWS = [
+  ['Q','W','E','R','T','Y','U','I','O','P'],
+  ['A','S','D','F','G','H','J','K','L'],
+  ['Z','X','C','V','B','N','M']
+];
+
+// Build key elements; store center coordinates after layout
+const keyMap = {}; // letter -> { el, cx, cy, row, col }
+
+ROWS.forEach((row, ri) => {
+  const rowEl = document.getElementById(`row-${ri}`);
+  row.forEach((letter, ci) => {
+    const el = document.createElement('div');
+    el.className = 'key';
+    el.textContent = letter;
+    el.dataset.key = letter;
+    rowEl.appendChild(el);
+    keyMap[letter] = { el, row: ri, col: ci, cx: 0, cy: 0 };
+  });
+});
+
+// After DOM paint, compute center positions of each key
+function computeKeyPositions() {
+  const wrapRect = document.getElementById('keyboard-wrap').getBoundingClientRect();
+  Object.entries(keyMap).forEach(([letter, data]) => {
+    const rect = data.el.getBoundingClientRect();
+    data.cx = rect.left - wrapRect.left + rect.width  / 2;
+    data.cy = rect.top  - wrapRect.top  + rect.height / 2;
+  });
+}
+
+window.addEventListener('resize', computeKeyPositions);
+// slight delay to allow layout
+setTimeout(computeKeyPositions, 100);
+
+
+/* ============================================================
+   SECTION 2 — CANVAS SETUP
+   The halo canvas is sized to match the keyboard-wrap div.
+============================================================ */
+
+const canvas  = document.getElementById('halo-canvas');
+const ctx     = canvas.getContext('2d');
+const kbWrap  = document.getElementById('keyboard-wrap');
+
+function resizeCanvas() {
+  canvas.width  = kbWrap.offsetWidth;
+  canvas.height = kbWrap.offsetHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', () => { resizeCanvas(); computeKeyPositions(); });
+
+
+/* ============================================================
+   SECTION 3 — CONFIGURATION (live-bound to controls)
+============================================================ */
+
+const cfg = {
+  bubbleRadius:    38,   // px radius of each candidate bubble
+  candidateCount:  8,    // how many nearest neighbors to show
+  hysteresis:      0.4,  // score delta needed to switch active target (0–1)
+  popRadius:       70,   // px distance from anchor to trigger pop check
+  popSensitivity:  0.6,  // 0–1, higher = easier to commit on directional intent
+  showHalo:        true,
+  showPopRing:     true,
+  showDebugLabels: true,
+};
+
+// Bind sliders
+function bindSlider(id, lblId, prop, parse=parseFloat) {
+  const el = document.getElementById(id);
+  const lb = document.getElementById(lblId);
+  el.addEventListener('input', () => {
+    cfg[prop] = parse(el.value);
+    lb.textContent = el.value;
+  });
+}
+bindSlider('ctrl-bubble',      'lbl-bubble',      'bubbleRadius',   parseInt);
+bindSlider('ctrl-candidates',  'lbl-candidates',  'candidateCount', parseInt);
+bindSlider('ctrl-hysteresis',  'lbl-hysteresis',  'hysteresis');
+bindSlider('ctrl-popradius',   'lbl-popradius',   'popRadius',      parseInt);
+bindSlider('ctrl-popsens',     'lbl-popsens',     'popSensitivity');
+
+document.getElementById('tog-halo').addEventListener('change', e => cfg.showHalo = e.target.checked);
+document.getElementById('tog-ring').addEventListener('change', e => cfg.showPopRing = e.target.checked);
+document.getElementById('tog-debug-labels').addEventListener('change', e => cfg.showDebugLabels = e.target.checked);
+
+
+/* ============================================================
+   SECTION 4 — INTERACTION STATE
+   All mutable session state lives here.
+============================================================ */
+
+const state = {
+  active:        false,   // is a session currently running?
+  anchorKey:     null,    // letter string of the anchor key
+  anchorCx:      0,       // canvas-space anchor center X
+  anchorCy:      0,       // canvas-space anchor center Y
+  mouseX:        0,       // current mouse X in canvas space
+  mouseY:        0,       // current mouse Y in canvas space
+  candidates:    [],      // [ { letter, cx, cy, score, active } ]
+  activeTarget:  null,    // letter currently highlighted
+  activeScore:   -Infinity, // score of active target (for hysteresis)
+  popMet:        false,   // is pop condition currently satisfied?
+  outputText:    '',      // committed text so far
+  lastCommit:    null,    // most recently committed letter
+};
+
+
+/* ============================================================
+   SECTION 5 — CANDIDATE GENERATION
+   Given an anchor key, find the N spatially nearest keys.
+============================================================ */
+
+function generateCandidates(anchorLetter) {
+  const anchor = keyMap[anchorLetter];
+  if (!anchor) return [];
+
+  // Compute Euclidean distance from anchor to every other key
+  const distances = Object.entries(keyMap)
+    .filter(([l]) => l !== anchorLetter)
+    .map(([letter, data]) => {
+      const dx = data.cx - anchor.cx;
+      const dy = data.cy - anchor.cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      return { letter, cx: data.cx, cy: data.cy, dist };
+    });
+
+  // Sort by distance, take top N
+  distances.sort((a, b) => a.dist - b.dist);
+  return distances.slice(0, cfg.candidateCount).map(d => ({
+    letter: d.letter,
+    cx: d.cx,
+    cy: d.cy,
+    score: 0,
+    isActive: false,
+  }));
+}
+
+
+/* ============================================================
+   SECTION 6 — TARGET SCORING
+   Score each candidate based on:
+   - Proximity to current cursor
+   - Alignment with movement direction from anchor
+   Hysteresis prevents flickering between close scores.
+============================================================ */
+
+function scoreCandidates() {
+  if (!state.candidates.length) return;
+
+  // Vector from anchor to cursor
+  const dx = state.mouseX - state.anchorCx;
+  const dy = state.mouseY - state.anchorCy;
+  const cursorDist = Math.sqrt(dx * dx + dy * dy);
+
+  // Unit direction of cursor movement
+  const udx = cursorDist > 0.01 ? dx / cursorDist : 0;
+  const udy = cursorDist > 0.01 ? dy / cursorDist : 0;
+
+  let bestScore = -Infinity;
+  let bestLetter = null;
+
+  state.candidates.forEach(c => {
+    // Vector from anchor to candidate
+    const cdx = c.cx - state.anchorCx;
+    const cdy = c.cy - state.anchorCy;
+    const candidateDist = Math.sqrt(cdx * cdx + cdy * cdy);
+
+    // Directional alignment (dot product with cursor direction)
+    const alignment = candidateDist > 0.01
+      ? (cdx / candidateDist) * udx + (cdy / candidateDist) * udy
+      : 0;
+
+    // Proximity score: how close is cursor to this candidate?
+    const toCursorDx = c.cx - state.mouseX;
+    const toCursorDy = c.cy - state.mouseY;
+    const toCursorDist = Math.sqrt(toCursorDx * toCursorDx + toCursorDy * toCursorDy);
+    const proximityScore = 1 / (1 + toCursorDist * 0.04);
+
+    // Blend: alignment matters more as cursor moves further out
+    const moveFactor = Math.min(cursorDist / cfg.popRadius, 1);
+    c.score = proximityScore * (1 - moveFactor * 0.5) + alignment * moveFactor * 0.7;
+
+    if (c.score > bestScore) {
+      bestScore = c.score;
+      bestLetter = c.letter;
+    }
+    c.isActive = false;
+  });
+
+  // Hysteresis: only switch active target if new best beats old by threshold
+  if (
+    bestLetter !== state.activeTarget &&
+    bestScore > state.activeScore + cfg.hysteresis * 0.5
+  ) {
+    state.activeTarget = bestLetter;
+    state.activeScore  = bestScore;
+  }
+
+  // Mark active candidate
+  state.candidates.forEach(c => { c.isActive = c.letter === state.activeTarget; });
+}
+
+
+/* ============================================================
+   SECTION 7 — POP DETECTION
+   A commit is triggered when:
+   - Cursor is beyond popRadius from anchor
+   - The directional intent (how much cursor aligns with active target) exceeds sensitivity
+============================================================ */
+
+function checkPop() {
+  if (!state.active || !state.activeTarget) {
+    state.popMet = false;
+    return false;
+  }
+
+  const dx = state.mouseX - state.anchorCx;
+  const dy = state.mouseY - state.anchorCy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  if (dist < cfg.popRadius) {
+    state.popMet = false;
+    return false;
+  }
+
+  // Check alignment of cursor with active target direction
+  const target = keyMap[state.activeTarget];
+  if (!target) { state.popMet = false; return false; }
+
+  const tdx = target.cx - state.anchorCx;
+  const tdy = target.cy - state.anchorCy;
+  const tdist = Math.sqrt(tdx * tdx + tdy * tdy);
+
+  // Unit vectors
+  const udx = dx / dist;
+  const udy = dy / dist;
+  const utdx = tdist > 0 ? tdx / tdist : 0;
+  const utdy = tdist > 0 ? tdy / tdist : 0;
+
+  // Dot product = how well cursor direction matches target direction
+  const dot = udx * utdx + udy * utdy;
+
+  state.popMet = dot >= (1 - cfg.popSensitivity * 0.8);
+  return state.popMet;
+}
+
+
+/* ============================================================
+   SECTION 8 — COMMIT
+   Commits the active target letter, appends to output,
+   and recenters the session on the committed key.
+============================================================ */
+
+function commitTarget() {
+  if (!state.activeTarget) return;
+
+  const letter = state.activeTarget;
+  state.outputText += letter;
+  state.lastCommit  = letter;
+
+  // Update output display
+  document.getElementById('output-text').textContent = state.outputText;
+  document.getElementById('dbg-last').textContent = letter;
+
+  // Flash effect
+  const flash = document.getElementById('commit-flash');
+  flash.classList.add('flash');
+  setTimeout(() => flash.classList.remove('flash'), 100);
+
+  // Reanchor on committed key
+  const newAnchor = keyMap[letter];
+  if (newAnchor) {
+    // Unhighlight old anchor
+    if (state.anchorKey) {
+      keyMap[state.anchorKey].el.classList.remove('anchor-active');
+    }
+    state.anchorKey = letter;
+    state.anchorCx  = newAnchor.cx;
+    state.anchorCy  = newAnchor.cy;
+    newAnchor.el.classList.add('anchor-active');
+
+    // Regenerate candidates from new anchor
+    state.candidates   = generateCandidates(letter);
+    state.activeTarget = null;
+    state.activeScore  = -Infinity;
+    state.popMet       = false;
+  }
+}
+
+
+/* ============================================================
+   SECTION 9 — RENDERING
+   Draws the halo overlay on the canvas each frame.
+   - Pop threshold ring
+   - Connector line (anchor → cursor)
+   - Candidate bubbles
+   - Active target emphasis
+============================================================ */
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!state.active || !cfg.showHalo) {
+    requestAnimationFrame(render);
+    return;
+  }
+
+  const ax = state.anchorCx;
+  const ay = state.anchorCy;
+  const mx = state.mouseX;
+  const my = state.mouseY;
+  const dist = Math.sqrt((mx-ax)**2 + (my-ay)**2);
+
+  // ── Pop threshold ring ──────────────────────────────────────
+  if (cfg.showPopRing) {
+    ctx.beginPath();
+    ctx.arc(ax, ay, cfg.popRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = state.popMet
+      ? 'rgba(0,255,163,0.35)'
+      : 'rgba(0,198,255,0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 6]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ── Connector line (anchor → cursor) ───────────────────────
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(mx, my);
+  ctx.strokeStyle = state.popMet
+    ? 'rgba(0,255,163,0.5)'
+    : 'rgba(0,198,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // ── Anchor dot ─────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(ax, ay, 5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,198,255,0.8)';
+  ctx.fill();
+
+  // ── Candidate bubbles ───────────────────────────────────────
+  state.candidates.forEach(c => {
+    const isActive = c.isActive;
+    const r = isActive ? cfg.bubbleRadius * 1.4 : cfg.bubbleRadius;
+
+    // Glow for active
+    if (isActive) {
+      const grd = ctx.createRadialGradient(c.cx, c.cy, r * 0.2, c.cx, c.cy, r * 1.6);
+      grd.addColorStop(0, 'rgba(0,198,255,0.25)');
+      grd.addColorStop(1, 'rgba(0,198,255,0)');
+      ctx.beginPath();
+      ctx.arc(c.cx, c.cy, r * 1.6, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    }
+
+    // Bubble fill
+    ctx.beginPath();
+    ctx.arc(c.cx, c.cy, r, 0, Math.PI * 2);
+    if (isActive) {
+      const grad = ctx.createRadialGradient(c.cx, c.cy - r * 0.3, r * 0.1, c.cx, c.cy, r);
+      grad.addColorStop(0, 'rgba(0,220,255,0.5)');
+      grad.addColorStop(1, 'rgba(0,80,140,0.7)');
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = 'rgba(22,30,50,0.85)';
+    }
+    ctx.fill();
+
+    // Bubble border
+    ctx.beginPath();
+    ctx.arc(c.cx, c.cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = isActive
+      ? (state.popMet ? 'rgba(0,255,163,0.9)' : 'rgba(0,198,255,0.9)')
+      : 'rgba(60,80,120,0.6)';
+    ctx.lineWidth = isActive ? 2 : 1;
+    ctx.stroke();
+
+    // Letter label
+    if (cfg.showDebugLabels || isActive) {
+      ctx.font = isActive
+        ? `bold ${Math.round(r * 0.72)}px 'Trebuchet MS', sans-serif`
+        : `${Math.round(r * 0.6)}px 'Trebuchet MS', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = isActive ? '#ffffff' : 'rgba(160,180,220,0.75)';
+      ctx.fillText(c.letter.toUpperCase(), c.cx, c.cy);
+    }
+
+    // Score label (debug)
+    if (cfg.showDebugLabels) {
+      ctx.font = `${Math.round(r * 0.3)}px 'Courier New', monospace`;
+      ctx.fillStyle = 'rgba(0,198,255,0.5)';
+      ctx.fillText(c.score.toFixed(2), c.cx, c.cy + r * 0.55);
+    }
+  });
+
+  // ── Cursor dot ─────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(mx, my, 4, 0, Math.PI * 2);
+  ctx.fillStyle = state.popMet ? 'rgba(0,255,163,0.9)' : 'rgba(0,198,255,0.6)';
+  ctx.fill();
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+
+/* ============================================================
+   SECTION 10 — DEBUG PANEL UPDATE
+============================================================ */
+
+function updateDebug() {
+  const dx = state.mouseX - state.anchorCx;
+  const dy = state.mouseY - state.anchorCy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  document.getElementById('dbg-anchor').textContent = state.anchorKey || '—';
+  document.getElementById('dbg-target').textContent = state.activeTarget || '—';
+  document.getElementById('dbg-dist').textContent   = `${Math.round(dist)} px`;
+
+  const popEl = document.getElementById('dbg-pop');
+  popEl.textContent  = state.popMet ? 'YES ✓' : 'NO';
+  popEl.className    = `d-value ${state.popMet ? 'pop-met' : 'pop-nope'}`;
+}
+
+
+/* ============================================================
+   SECTION 11 — EVENT HANDLING
+   Mouse events on the keyboard-wrap div.
+   Touch-to-mouse bridging is included for tablet demos.
+============================================================ */
+
+// Convert a mouse/touch event to canvas-local coordinates
+function toCanvasCoords(e) {
+  const rect = kbWrap.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  };
+}
+
+// Find which key (if any) is at a canvas coordinate
+function keyAtPoint(x, y) {
+  for (const [letter, data] of Object.entries(keyMap)) {
+    const dx = x - data.cx;
+    const dy = y - data.cy;
+    if (Math.sqrt(dx*dx + dy*dy) < 28) return letter; // hit radius
+  }
+  return null;
+}
+
+// ── MOUSE DOWN — start session ──────────────────────────────
+function onPointerDown(e) {
+  e.preventDefault();
+  const { x, y } = toCanvasCoords(e);
+  const hit = keyAtPoint(x, y);
+  if (!hit) return;
+
+  // Clear any previous anchor highlight
+  if (state.anchorKey && keyMap[state.anchorKey]) {
+    keyMap[state.anchorKey].el.classList.remove('anchor-active');
+  }
+
+  state.active      = true;
+  state.anchorKey   = hit;
+  state.anchorCx    = keyMap[hit].cx;
+  state.anchorCy    = keyMap[hit].cy;
+  state.mouseX      = x;
+  state.mouseY      = y;
+  state.candidates  = generateCandidates(hit);
+  state.activeTarget = null;
+  state.activeScore  = -Infinity;
+  state.popMet       = false;
+
+  keyMap[hit].el.classList.add('anchor-active');
+}
+
+// ── MOUSE MOVE — update targeting ───────────────────────────
+function onPointerMove(e) {
+  e.preventDefault();
+  if (!state.active) return;
+
+  const { x, y } = toCanvasCoords(e);
+  state.mouseX = x;
+  state.mouseY = y;
+
+  scoreCandidates();
+
+  if (checkPop()) {
+    commitTarget();
+  }
+
+  updateDebug();
+}
+
+// ── MOUSE UP — end session ───────────────────────────────────
+function onPointerUp(e) {
+  e.preventDefault();
+  if (!state.active) return;
+
+  state.active = false;
+
+  if (state.anchorKey && keyMap[state.anchorKey]) {
+    keyMap[state.anchorKey].el.classList.remove('anchor-active');
+  }
+
+  state.anchorKey    = null;
+  state.candidates   = [];
+  state.activeTarget = null;
+  state.activeScore  = -Infinity;
+  state.popMet       = false;
+
+  updateDebug();
+}
+
+// Attach to keyboard-wrap (handles all mouse activity over the KB area)
+kbWrap.addEventListener('mousedown',  onPointerDown,  { passive: false });
+kbWrap.addEventListener('mousemove',  onPointerMove,  { passive: false });
+kbWrap.addEventListener('mouseup',    onPointerUp,    { passive: false });
+kbWrap.addEventListener('mouseleave', onPointerUp,    { passive: false });
+
+// Touch support
+kbWrap.addEventListener('touchstart',  onPointerDown,  { passive: false });
+kbWrap.addEventListener('touchmove',   onPointerMove,  { passive: false });
+kbWrap.addEventListener('touchend',    onPointerUp,    { passive: false });
+kbWrap.addEventListener('touchcancel', onPointerUp,    { passive: false });
+
+// Clear button
+document.getElementById('btn-clear').addEventListener('click', () => {
+  state.outputText = '';
+  document.getElementById('output-text').textContent = '';
+});
+
+// Also handle mouseup anywhere on the page in case cursor leaves wrap mid-drag
+document.addEventListener('mouseup', onPointerUp);
+</script>
+</body>
+</html>

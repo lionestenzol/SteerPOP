@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SteerPop v0.4 — Engine + Web Lab</title>
+<style>
+/* ============================================================
+   RESET & DESIGN TOKENS
+============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #080a0d;
+  --surface:      #0e1118;
+  --surface2:     #12161f;
+  --border:       #1a2030;
+  --border2:      #232c40;
+  --key-bg:       #131820;
+  --key-border:   #1e2840;
+  --key-text:     #8898b8;
+  --text:         #c4cedf;
+  --muted:        #3d4a62;
+  --accent:       #00d4ff;
+  --accent2:      #8b5cf6;
+  --commit-col:   #00ffaa;
+  --armed-col:    #ffb700;
+  --danger:       #ff4455;
+  --suggest-col:  #c084fc;
+  --font-mono: 'Courier New', monospace;
+  --font-ui:   'Trebuchet MS', sans-serif;
+}
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px 48px;
+  user-select: none;
+  cursor: crosshair;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+}
+
+/* ── HEADER ──────────────────────────────────────────────── */
+.header { text-align: center; margin-bottom: 20px; }
+.header h1 {
+  font-size: 1.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  background: linear-gradient(100deg, var(--accent) 0%, var(--accent2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header-sub {
+  color: var(--muted); font-size: 0.7rem;
+  letter-spacing: 0.18em; text-transform: uppercase; margin-top: 5px;
+}
+.version-badge {
+  display: inline-block; background: var(--border2);
+  color: var(--accent); font-size: 0.6rem; letter-spacing: 0.12em;
+  padding: 2px 8px; border-radius: 20px;
+  border: 1px solid var(--border2); margin-top: 6px;
+}
+
+/* ── OUTPUT BAR ──────────────────────────────────────────── */
+.output-area {
+  width: 100%; max-width: 820px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 12px;
+}
+.output-label {
+  color: var(--muted); font-size: 0.65rem;
+  letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;
+}
+#output-text {
+  flex: 1; font-family: var(--font-mono); font-size: 1.05rem;
+  color: var(--accent); min-height: 26px; letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--border); padding-bottom: 2px; word-break: break-all;
+}
+#output-text::after {
+  content: '\25CD'; animation: blink 1s step-end infinite; color: var(--accent2);
+}
+@keyframes blink { 50% { opacity: 0; } }
+.btn-clear {
+  background: none; border: 1px solid var(--border2); color: var(--muted);
+  border-radius: 4px; padding: 4px 10px; cursor: pointer;
+  font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+  transition: all 0.15s;
+}
+.btn-clear:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── MAIN LAYOUT ─────────────────────────────────────────── */
+.main-layout {
+  width: 100%; max-width: 960px;
+  display: grid; grid-template-columns: 1fr 250px;
+  gap: 16px; align-items: start;
+}
+
+/* ── KEYBOARD ────────────────────────────────────────────── */
+.keyboard-wrap {
+  position: relative; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 22px 14px 18px; overflow: visible;
+}
+.key-layer { position: relative; z-index: 1; }
+.kb-row { display: flex; justify-content: center; gap: 5px; margin-bottom: 5px; }
+.key {
+  width: 50px; height: 50px; background: var(--key-bg);
+  border: 1px solid var(--key-border); border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.82rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--key-text);
+  cursor: crosshair; position: relative; z-index: 2;
+  transition: background 0.1s, border-color 0.15s, color 0.15s, transform 0.08s ease-out;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 4px rgba(0,0,0,0.4);
+}
+.key.anchor-active {
+  background: rgba(0,212,255,0.1); border-color: var(--accent); color: var(--accent);
+  box-shadow: 0 0 10px rgba(0,212,255,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.key.highlight-top {
+  background: rgba(0,255,170,0.15); border-color: var(--commit-col); color: var(--commit-col);
+  box-shadow: 0 0 12px rgba(0,255,170,0.3);
+}
+.key.highlight {
+  border-color: rgba(0,212,255,0.5);
+  color: var(--accent);
+  transition: border-color 0.08s, color 0.08s, opacity 0.08s;
+}
+.key.key-space {
+  flex: 1; max-width: 300px; font-size: 0.7rem; letter-spacing: 0.1em;
+}
+.key.key-backspace {
+  width: 70px; font-size: 1rem;
+}
+.key.key-punct {
+  width: 50px; font-size: 1rem;
+}
+
+/* ── HALO CANVAS ─────────────────────────────────────────── */
+#halo-canvas {
+  position: absolute; top: -140px; left: -20px; right: -20px; bottom: -20px;
+  pointer-events: none; z-index: 20;
+}
+
+/* ── COMMIT FLASH ────────────────────────────────────────── */
+#commit-flash {
+  position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  opacity: 0; background: var(--commit-col); transition: opacity 0.06s;
+}
+#commit-flash.flash { opacity: 0.07; }
+
+/* ── SIDE PANEL ──────────────────────────────────────────── */
+.side-panel { display: flex; flex-direction: column; gap: 14px; }
+.panel-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px;
+}
+.panel-title {
+  font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 12px; padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Sliders */
+.ctrl-row { display: flex; flex-direction: column; gap: 9px; }
+.ctrl-item { display: flex; flex-direction: column; gap: 4px; }
+.ctrl-item label {
+  display: flex; justify-content: space-between;
+  font-size: 0.68rem; color: var(--muted); letter-spacing: 0.04em;
+}
+.ctrl-item label span {
+  color: var(--accent); font-family: var(--font-mono); font-size: 0.66rem;
+}
+input[type=range] {
+  -webkit-appearance: none; width: 100%; height: 3px;
+  background: var(--border2); border-radius: 2px; outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+  box-shadow: 0 0 5px rgba(0,212,255,0.5);
+}
+
+/* Toggles */
+.toggle-row { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+.toggle-item {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.68rem; color: var(--muted); letter-spacing: 0.04em;
+}
+.switch { position: relative; width: 30px; height: 16px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider-sw {
+  position: absolute; inset: 0; background: var(--border2);
+  border-radius: 16px; cursor: pointer; transition: background 0.2s;
+}
+.slider-sw::before {
+  content: ''; position: absolute; width: 10px; height: 10px;
+  left: 3px; top: 3px; background: var(--muted); border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.switch input:checked + .slider-sw { background: rgba(0,212,255,0.25); }
+.switch input:checked + .slider-sw::before {
+  transform: translateX(14px); background: var(--accent);
+}
+
+/* Debug */
+.debug-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.debug-cell {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 6px 9px;
+}
+.debug-cell.full { grid-column: 1 / -1; }
+.d-label {
+  font-size: 0.56rem; color: var(--muted); letter-spacing: 0.1em;
+  text-transform: uppercase; margin-bottom: 2px;
+}
+.d-value { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text); }
+.d-accent  { color: var(--accent); }
+.d-commit  { color: var(--commit-col); }
+.d-armed   { color: var(--armed-col); }
+.d-muted   { color: var(--muted); }
+.d-suggest { color: var(--suggest-col); }
+
+/* Event log */
+.event-log {
+  max-height: 120px; overflow-y: auto; font-family: var(--font-mono);
+  font-size: 0.6rem; color: var(--muted); line-height: 1.6;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 6px 9px; margin-top: 8px;
+}
+.event-log .ev-commit { color: var(--commit-col); }
+.event-log .ev-armed  { color: var(--armed-col); }
+.event-log .ev-info   { color: var(--accent); }
+
+/* ── MOBILE RESPONSIVE ──────────────────────────────────── */
+@media (max-width: 600px) {
+  body { padding: 8px 4px 16px; }
+  .header { margin-bottom: 10px; }
+  .header h1 { font-size: 1.2rem; }
+  .header-sub { font-size: 0.6rem; }
+  .output-area { padding: 8px 10px; margin-bottom: 8px; }
+  #output-text { font-size: 0.9rem; }
+  .main-layout {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .side-panel { display: none; }
+  .keyboard-wrap { padding: 10px 4px 10px; border-radius: 10px; }
+  .kb-row { gap: 3px; margin-bottom: 3px; }
+  .key {
+    width: calc((100vw - 50px) / 10);
+    height: calc((100vw - 50px) / 10);
+    min-width: 28px; min-height: 28px;
+    max-width: 42px; max-height: 42px;
+    font-size: 0.7rem;
+    border-radius: 5px;
+  }
+  .key.key-space {
+    flex: 1; max-width: none; height: 40px;
+    font-size: 0.65rem;
+  }
+  .key.key-backspace {
+    width: calc((100vw - 50px) / 7);
+    max-width: 55px;
+    font-size: 0.85rem;
+  }
+  .key.key-punct {
+    width: calc((100vw - 50px) / 7);
+    max-width: 50px;
+    font-size: 0.85rem;
+  }
+  #halo-canvas { top: -100px; left: -10px; right: -10px; }
+}
+</style>
+</head>
+<body>
+
+<div id="commit-flash"></div>
+
+<div class="header">
+  <h1>SteerPop</h1>
+  <div class="header-sub">Engine v0.4 &middot; Layer Model</div>
+  <div class="version-badge">v0.4</div>
+</div>
+
+<div class="output-area">
+  <div class="output-label">Out</div>
+  <div id="output-text" aria-live="polite" aria-label="typed text output"></div>
+  <button class="btn-clear" id="btn-clear">Clear</button>
+</div>
+
+<div class="main-layout">
+
+  <div class="keyboard-wrap" id="keyboard-wrap" role="application" aria-label="SteerPop keyboard">
+    <canvas id="halo-canvas"></canvas>
+    <div class="key-layer">
+      <div class="kb-row" id="row-0"></div>
+      <div class="kb-row" id="row-1"></div>
+      <div class="kb-row" id="row-2"></div>
+      <div class="kb-row" id="row-3"></div>
+      <div class="kb-row" id="row-4"></div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+
+    <div class="panel-card">
+      <div class="panel-title">Controls</div>
+      <div class="ctrl-row">
+        <div class="ctrl-item">
+          <label>Grid Step <span id="lbl-gridstep">30</span>px</label>
+          <input type="range" id="ctrl-gridstep" min="10" max="60" value="30" />
+        </div>
+        <div class="ctrl-item">
+          <label>Warp Pull <span id="lbl-warp">0.2</span></label>
+          <input type="range" id="ctrl-warp" min="0" max="0.8" step="0.05" value="0.2" />
+        </div>
+        <div class="ctrl-item">
+          <label>Deadzone <span id="lbl-deadzone">8</span>px</label>
+          <input type="range" id="ctrl-deadzone" min="0" max="30" value="8" />
+        </div>
+        <div class="ctrl-item">
+          <label>Flick Speed <span id="lbl-flickspeed">8</span></label>
+          <input type="range" id="ctrl-flickspeed" min="4" max="20" value="8" />
+        </div>
+        <div class="ctrl-item">
+          <label>Finger Size <span id="lbl-finger">22</span>px</label>
+          <input type="range" id="ctrl-finger" min="10" max="40" value="22" />
+        </div>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-item">Show Top Bubble
+          <label class="switch"><input type="checkbox" id="tog-halo" checked /><span class="slider-sw"></span></label>
+        </div>
+        <div class="toggle-item">Key Highlights
+          <label class="switch"><input type="checkbox" id="tog-highlights" checked /><span class="slider-sw"></span></label>
+        </div>
+        <div class="toggle-item">Suggestion Console
+          <label class="switch"><input type="checkbox" id="tog-suggest" /><span class="slider-sw"></span></label>
+        </div>
+        <div class="toggle-item">Debug Labels
+          <label class="switch"><input type="checkbox" id="tog-debug-labels" /><span class="slider-sw"></span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <div class="panel-title">Debug</div>
+      <div class="debug-grid">
+        <div class="debug-cell">
+          <div class="d-label">Session</div>
+          <div class="d-value d-accent" id="dbg-session">IDLE</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Anchor</div>
+          <div class="d-value d-accent" id="dbg-anchor">&mdash;</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Target</div>
+          <div class="d-value d-accent" id="dbg-target">&mdash;</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Distance</div>
+          <div class="d-value" id="dbg-dist">0 px</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Flick State</div>
+          <div class="d-value d-muted" id="dbg-flickstate">IDLE</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Swipe Angle</div>
+          <div class="d-value d-muted" id="dbg-angle">&mdash;</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Speed</div>
+          <div class="d-value d-muted" id="dbg-speed">0</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Candidates</div>
+          <div class="d-value d-muted" id="dbg-candcount">0</div>
+        </div>
+        <div class="debug-cell full">
+          <div class="d-label">Last Commit</div>
+          <div class="d-value d-commit" id="dbg-last">&mdash;</div>
+        </div>
+        <div class="debug-cell full">
+          <div class="d-label">Suggestion</div>
+          <div class="d-value d-suggest" id="dbg-suggest">&mdash;</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Active Row</div>
+          <div class="d-value d-accent" id="dbg-row">&mdash;</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Swipe Dir</div>
+          <div class="d-value d-accent" id="dbg-swipedir">&mdash;</div>
+        </div>
+      </div>
+      <div class="event-log" id="event-log"></div>
+    </div>
+
+    <div class="panel-card" style="font-size:0.68rem; color:var(--muted); line-height:1.8; letter-spacing:0.03em;">
+      <strong style="color:var(--text); display:block; margin-bottom:6px;">How to use</strong>
+      <strong style="color:var(--text);">Tap</strong> a key &rarr; letter enters immediately.<br/>
+      <strong style="color:var(--text);">Slide</strong> in a direction &rarr; nearby keys light up.<br/>
+      <strong style="color:var(--text);">Flick up</strong> &rarr; confirms the top candidate.<br/>
+      <strong style="color:var(--text);">Flick down</strong> &rarr; repeats the anchor letter.<br/>
+      <strong style="color:var(--text);">Keep sliding</strong> &rarr; anchor moves, pick next letter.<br/>
+      <strong style="color:var(--text);">Lift</strong> &rarr; ends the session.
+    </div>
+
+  </div>
+
+</div>
+
+<script type="module" src="./web-adapter.js"></script>
+</body>
+</html>

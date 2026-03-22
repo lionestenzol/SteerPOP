@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SteerPOP Angle Diagnostic</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Consolas', monospace; background: #111; color: #eee; padding: 20px; }
+  h1 { font-size: 18px; margin-bottom: 8px; color: #aaa; }
+  .instructions { font-size: 13px; color: #666; margin-bottom: 16px; }
+
+  .keyboard-container { position: relative; display: inline-block; margin-bottom: 20px; }
+  svg.overlay { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
+  svg.overlay line { pointer-events: stroke; cursor: crosshair; }
+
+  .key {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid #444; border-radius: 6px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer; user-select: none;
+    transition: background 0.15s, border-color 0.15s;
+    background: #222;
+    z-index: 2;
+  }
+  .key:hover { border-color: #888; }
+  .key.anchor { background: #2a5; border-color: #4f8; color: #fff; }
+
+  .tooltip {
+    position: fixed; background: #222; border: 1px solid #555; border-radius: 4px;
+    padding: 6px 10px; font-size: 12px; pointer-events: none; display: none;
+    z-index: 100; white-space: nowrap;
+  }
+
+  .summary { margin-top: 12px; }
+  .summary h2 { font-size: 15px; color: #aaa; margin-bottom: 6px; }
+  .stats { font-size: 13px; color: #888; margin-bottom: 10px; }
+  .stats span { margin-right: 14px; }
+  .stats .direct { color: #4f8; }
+  .stats .reachable { color: #ed3; }
+  .stats .bad { color: #f55; }
+
+  table { border-collapse: collapse; font-size: 12px; width: 100%; max-width: 800px; }
+  th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #333; }
+  th { color: #888; font-weight: 500; }
+  tr.status-direct td:first-child { color: #4f8; }
+  tr.status-reachable td:first-child { color: #ed3; }
+  tr.status-wrong_direction td:first-child { color: #f55; }
+  tr.status-unreachable td:first-child { color: #f55; }
+</style>
+</head>
+<body>
+<h1>SteerPOP Angle Diagnostic</h1>
+<p class="instructions">Click any key to set it as anchor. Lines show reachability from that key.</p>
+
+<div class="keyboard-container" id="keyboard"></div>
+<div class="tooltip" id="tooltip"></div>
+
+<div class="summary">
+  <h2 id="anchorLabel">Select a key</h2>
+  <div class="stats" id="stats"></div>
+  <table id="table"><thead><tr><th>Target</th><th>Status</th><th>Angle</th><th>Distance</th><th>Direction</th><th>Row</th><th>Index</th></tr></thead><tbody></tbody></table>
+</div>
+
+<script type="module">
+import { SteerPopEngine } from './steerpop-engine.js';
+
+// Build geometry (same as test suite)
+const KEY_W = 50, GAP = 5;
+const ROWS = [
+  'QWERTYUIOP'.split(''),
+  'ASDFGHJKL'.split(''),
+  'ZXCVBNM'.split(''),
+];
+const ROW_OFFSETS = [0, 0.5 * (KEY_W + GAP), 1.5 * (KEY_W + GAP)];
+const ROW_Y = [30, 30 + KEY_W + GAP, 30 + 2 * (KEY_W + GAP)];
+
+const geometry = [];
+for (let r = 0; r < ROWS.length; r++) {
+  for (let c = 0; c < ROWS[r].length; c++) {
+    const x = ROW_OFFSETS[r] + c * (KEY_W + GAP) + KEY_W / 2;
+    const y = ROW_Y[r] + KEY_W / 2;
+    geometry.push({
+      id: ROWS[r][c], label: ROWS[r][c], row: r, col: c,
+      centerX: x, centerY: y, width: KEY_W, height: KEY_W, excluded: false,
+    });
+  }
+}
+
+// Compute transition map once
+const transitionMap = SteerPopEngine.computeTransitionMap(geometry);
+
+// Render keyboard
+const container = document.getElementById('keyboard');
+const maxX = Math.max(...geometry.map(k => k.centerX + k.width / 2));
+const maxY = Math.max(...geometry.map(k => k.centerY + k.height / 2));
+const padding = 10;
+container.style.width = (maxX + padding) + 'px';
+container.style.height = (maxY + padding) + 'px';
+
+const keyEls = new Map();
+for (const k of geometry) {
+  const el = document.createElement('div');
+  el.className = 'key';
+  el.textContent = k.label;
+  el.style.left = (k.centerX - k.width / 2) + 'px';
+  el.style.top = (k.centerY - k.height / 2) + 'px';
+  el.style.width = k.width + 'px';
+  el.style.height = k.height + 'px';
+  el.dataset.id = k.id;
+  container.appendChild(el);
+  keyEls.set(k.id, el);
+}
+
+// SVG overlay for lines
+const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+svg.classList.add('overlay');
+svg.setAttribute('width', maxX + padding);
+svg.setAttribute('height', maxY + padding);
+container.appendChild(svg);
+
+const tooltip = document.getElementById('tooltip');
+const anchorLabel = document.getElementById('anchorLabel');
+const statsDiv = document.getElementById('stats');
+const tableBody = document.querySelector('#table tbody');
+
+const statusColors = {
+  direct: '#4f8',
+  reachable: '#ed3',
+  wrong_direction: '#f55',
+  unreachable: '#f55',
+};
+const statusOpacity = {
+  direct: 0.7,
+  reachable: 0.5,
+  wrong_direction: 0.4,
+  unreachable: 0.25,
+};
+
+let activeAnchor = null;
+
+function selectAnchor(keyId) {
+  activeAnchor = keyId;
+
+  // Update key styles
+  for (const [id, el] of keyEls) {
+    el.classList.toggle('anchor', id === keyId);
+  }
+
+  // Clear SVG
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const inner = transitionMap.get(keyId);
+  if (!inner) return;
+
+  const anchor = geometry.find(k => k.id === keyId);
+  const entries = [];
+
+  for (const [tgtId, info] of inner) {
+    const tgt = geometry.find(k => k.id === tgtId);
+    entries.push({ tgtId, tgt, ...info });
+
+    // Draw line
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', anchor.centerX);
+    line.setAttribute('y1', anchor.centerY);
+    line.setAttribute('x2', tgt.centerX);
+    line.setAttribute('y2', tgt.centerY);
+    line.setAttribute('stroke', statusColors[info.status]);
+    line.setAttribute('stroke-opacity', statusOpacity[info.status]);
+    line.setAttribute('stroke-width', info.status === 'direct' ? 3 : 2);
+    line.style.pointerEvents = 'stroke';
+    line.dataset.info = `${keyId}->${tgtId}: ${info.status} | ${info.angle.toFixed(1)}° | dist=${info.distance.toFixed(0)} | dir=${info.direction} | row=${info.targetRow}`;
+
+    line.addEventListener('mouseenter', (e) => {
+      tooltip.textContent = line.dataset.info;
+      tooltip.style.display = 'block';
+    });
+    line.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top = (e.clientY + 12) + 'px';
+    });
+    line.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+
+    svg.appendChild(line);
+  }
+
+  // Stats
+  const counts = { direct: 0, reachable: 0, wrong_direction: 0, unreachable: 0 };
+  for (const e of entries) counts[e.status]++;
+  anchorLabel.textContent = `Anchor: ${keyId}`;
+  statsDiv.innerHTML =
+    `<span class="direct">Direct: ${counts.direct}</span>` +
+    `<span class="reachable">Reachable: ${counts.reachable}</span>` +
+    `<span class="bad">Wrong dir: ${counts.wrong_direction}</span>` +
+    `<span class="bad">Unreachable: ${counts.unreachable}</span>`;
+
+  // Table — sort: red first, then yellow, then green
+  const order = { unreachable: 0, wrong_direction: 1, reachable: 2, direct: 3 };
+  entries.sort((a, b) => order[a.status] - order[b.status]);
+  tableBody.innerHTML = '';
+  for (const e of entries) {
+    const tr = document.createElement('tr');
+    tr.className = `status-${e.status}`;
+    tr.innerHTML = `<td>${e.tgtId}</td><td>${e.status}</td><td>${e.angle.toFixed(1)}°</td><td>${e.distance.toFixed(0)}</td><td>${e.direction}</td><td>${e.targetRow}</td><td>${e.candidateIndex}</td>`;
+    tableBody.appendChild(tr);
+  }
+}
+
+// Click handlers
+for (const [id, el] of keyEls) {
+  el.addEventListener('click', () => selectAnchor(id));
+}
+
+// Select H by default
+selectAnchor('H');
+</script>
+</body>
+</html>

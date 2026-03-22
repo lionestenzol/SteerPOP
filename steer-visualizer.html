@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SteerPOP Live Visualizer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    background: #0a0a0a; color: #ddd;
+    overflow: hidden; touch-action: none;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+
+  .top-bar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 8px 16px; background: #151515; border-bottom: 1px solid #2a2a2a;
+    flex-shrink: 0;
+  }
+  .top-bar h1 { font-size: 14px; color: #888; font-weight: 500; }
+  .committed { font-size: 18px; color: #4f8; letter-spacing: 2px; min-width: 120px; }
+  .live-readout {
+    display: flex; gap: 16px; font-size: 12px; color: #666; margin-left: auto;
+  }
+  .live-readout .val { color: #aaa; }
+  .live-readout .dir-label { font-weight: 700; }
+  .live-readout .dir-up    { color: #f55; }
+  .live-readout .dir-down  { color: #f80; }
+  .live-readout .dir-left  { color: #5af; }
+  .live-readout .dir-right { color: #af5; }
+
+  .main-area {
+    flex: 1; display: flex; position: relative; overflow: hidden;
+  }
+
+  /* Keyboard + overlay */
+  .kb-zone {
+    position: relative; flex: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .kb-wrap { position: relative; }
+
+  canvas#viz {
+    position: absolute; top: 0; left: 0; z-index: 10;
+    pointer-events: none;
+  }
+
+  .key {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid #333; border-radius: 6px;
+    font-size: 15px; font-weight: 600; color: #555;
+    background: #1a1a1a; z-index: 5;
+    transition: background 0.08s, color 0.08s, border-color 0.08s;
+    pointer-events: none; /* canvas handles all input */
+  }
+  .key.anchor { background: #0a3a2a; border-color: #2a8a5a; color: #4f8; }
+  .key.candidate { border-color: #445; color: #88a; }
+  .key.top-candidate { background: #1a3a1a; border-color: #4f8; color: #4f8; }
+  .key.wrong-dir { background: #2a1515; border-color: #633; color: #f55; }
+
+  /* Touch surface — invisible overlay that captures pointer events */
+  .touch-surface {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    z-index: 20; cursor: crosshair;
+  }
+
+  /* Side panel */
+  .side-panel {
+    width: 240px; background: #111; border-left: 1px solid #2a2a2a;
+    padding: 12px; overflow-y: auto; flex-shrink: 0; font-size: 12px;
+  }
+  .panel-section { margin-bottom: 14px; }
+  .panel-section h3 { color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+
+  .zone-legend { display: flex; flex-direction: column; gap: 4px; }
+  .zone-row { display: flex; align-items: center; gap: 8px; }
+  .zone-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .zone-info { color: #888; }
+  .zone-active { color: #fff !important; font-weight: 700; }
+
+  .candidate-list { display: flex; flex-direction: column; gap: 2px; }
+  .cand-row { display: flex; gap: 6px; color: #666; }
+  .cand-row.top { color: #4f8; font-weight: 700; }
+  .cand-key { width: 20px; text-align: center; }
+  .cand-bar { height: 12px; background: #333; border-radius: 2px; transition: width 0.1s; }
+  .cand-row.top .cand-bar { background: #2a6a3a; }
+
+  .angle-detail { color: #888; line-height: 1.6; }
+  .angle-detail .label { color: #555; }
+  .angle-detail .value { color: #bbb; }
+  .angle-detail .highlight { color: #4f8; }
+  .angle-detail .warn { color: #f80; }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <h1>SteerPOP Visualizer</h1>
+  <div class="committed" id="committed"></div>
+  <div class="live-readout" id="readout"></div>
+</div>
+
+<div class="main-area">
+  <div class="kb-zone" id="kbZone">
+    <div class="kb-wrap" id="kbWrap">
+      <!-- Keys injected by JS -->
+      <canvas id="viz"></canvas>
+      <div class="touch-surface" id="touchSurface"></div>
+    </div>
+  </div>
+
+  <div class="side-panel" id="sidePanel">
+    <div class="panel-section">
+      <h3>Direction Zones</h3>
+      <div class="zone-legend" id="zoneLegend">
+        <div class="zone-row" data-dir="up">    <div class="zone-swatch" style="background:#f55"></div> <span class="zone-info">Up &mdash; &gt;50.2&deg; from horizontal</span></div>
+        <div class="zone-row" data-dir="down">  <div class="zone-swatch" style="background:#f80"></div> <span class="zone-info">Down &mdash; &gt;50.2&deg; from horizontal</span></div>
+        <div class="zone-row" data-dir="left">  <div class="zone-swatch" style="background:#5af"></div> <span class="zone-info">Left &mdash; &le;50.2&deg; from horizontal</span></div>
+        <div class="zone-row" data-dir="right"> <div class="zone-swatch" style="background:#af5"></div> <span class="zone-info">Right &mdash; &le;50.2&deg; from horizontal</span></div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h3>Angle Math</h3>
+      <div class="angle-detail" id="angleMath">
+        <span class="label">Touch a key to start</span>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h3>Candidates</h3>
+      <div class="candidate-list" id="candidateList">
+        <span style="color:#555">No candidates</span>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h3>Transition</h3>
+      <div class="angle-detail" id="transitionInfo">
+        <span class="label">Flick to commit, then slide for next letter</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { SteerPopEngine } from './steerpop-engine.js';
+
+// ── Geometry ──────────────────────────────────────────────
+
+const KEY_W = 52, GAP = 4, PAD = 20;
+const ROWS_LABELS = [
+  'QWERTYUIOP'.split(''),
+  'ASDFGHJKL'.split(''),
+  'ZXCVBNM'.split(''),
+];
+const ROW_OFFSETS = [0, 0.5 * (KEY_W + GAP), 1.5 * (KEY_W + GAP)];
+const ROW_Y_START = PAD;
+
+const geometry = [];
+for (let r = 0; r < ROWS_LABELS.length; r++) {
+  for (let c = 0; c < ROWS_LABELS[r].length; c++) {
+    const x = PAD + ROW_OFFSETS[r] + c * (KEY_W + GAP) + KEY_W / 2;
+    const y = ROW_Y_START + r * (KEY_W + GAP) + KEY_W / 2;
+    geometry.push({
+      id: ROWS_LABELS[r][c], label: ROWS_LABELS[r][c], row: r, col: c,
+      centerX: x, centerY: y, width: KEY_W, height: KEY_W, excluded: false,
+    });
+  }
+}
+
+// ── Engine ────────────────────────────────────────────────
+
+const engine = new SteerPopEngine({
+  gridStepSize: 30,
+  deadzoneRadius: 8,
+  flickSpeedThreshold: 8,
+  flickCooldownMs: 350,
+  warpStrength: 0,
+});
+engine.setGeometry(geometry);
+
+// Precompute transition map
+const transitionMap = SteerPopEngine.computeTransitionMap(geometry);
+
+// ── DOM Setup ─────────────────────────────────────────────
+
+const kbWrap = document.getElementById('kbWrap');
+const canvas = document.getElementById('viz');
+const ctx = canvas.getContext('2d');
+const touchSurface = document.getElementById('touchSurface');
+const readoutEl = document.getElementById('readout');
+const committedEl = document.getElementById('committed');
+const angleMathEl = document.getElementById('angleMath');
+const candidateListEl = document.getElementById('candidateList');
+const transitionInfoEl = document.getElementById('transitionInfo');
+const zoneLegend = document.getElementById('zoneLegend');
+
+// Layout keyboard
+const maxX = Math.max(...geometry.map(k => k.centerX + k.width / 2)) + PAD;
+const maxY = Math.max(...geometry.map(k => k.centerY + k.height / 2)) + PAD;
+kbWrap.style.width = maxX + 'px';
+kbWrap.style.height = maxY + 'px';
+
+canvas.width = maxX;
+canvas.height = maxY;
+canvas.style.width = maxX + 'px';
+canvas.style.height = maxY + 'px';
+
+const keyEls = new Map();
+for (const k of geometry) {
+  const el = document.createElement('div');
+  el.className = 'key';
+  el.textContent = k.label;
+  el.style.left = (k.centerX - k.width / 2) + 'px';
+  el.style.top = (k.centerY - k.height / 2) + 'px';
+  el.style.width = k.width + 'px';
+  el.style.height = k.height + 'px';
+  el.dataset.id = k.id;
+  kbWrap.appendChild(el);
+  keyEls.set(k.id, el);
+}
+
+// ── Direction zone math ───────────────────────────────────
+
+const THRESHOLD_RATIO = 1.2;
+// Boundary angle: atan(1.2) ≈ 50.19°
+const BOUNDARY_ANGLE = Math.atan(THRESHOLD_RATIO) * (180 / Math.PI);
+
+const ZONE_COLORS = {
+  right: { fill: 'rgba(170,255,85,0.08)',  stroke: '#af5', light: '#af5' },
+  left:  { fill: 'rgba(85,170,255,0.08)',  stroke: '#5af', light: '#5af' },
+  up:    { fill: 'rgba(255,85,85,0.08)',    stroke: '#f55', light: '#f55' },
+  down:  { fill: 'rgba(255,136,0,0.08)',    stroke: '#f80', light: '#f80' },
+};
+
+// ── State ─────────────────────────────────────────────────
+
+let committedText = '';
+let lastAnchorId = null;
+let isDown = false;
+
+// ── Pointer handling ──────────────────────────────────────
+
+function getLocalPos(e) {
+  const rect = kbWrap.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return { x: clientX - rect.left, y: clientY - rect.top };
+}
+
+let pointerStartTime = 0;
+
+touchSurface.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  touchSurface.setPointerCapture(e.pointerId);
+  isDown = true;
+  const pos = getLocalPos(e);
+  pointerStartTime = performance.now();
+  engine.pointerDown({ x: pos.x, y: pos.y, timestamp: pointerStartTime });
+  processEvents();
+  scheduleRender();
+});
+
+touchSurface.addEventListener('pointermove', (e) => {
+  if (!isDown) return;
+  e.preventDefault();
+  const pos = getLocalPos(e);
+  engine.pointerMove({ x: pos.x, y: pos.y, timestamp: performance.now() });
+  processEvents();
+  scheduleRender();
+});
+
+touchSurface.addEventListener('pointerup', (e) => {
+  if (!isDown) return;
+  isDown = false;
+  const pos = getLocalPos(e);
+  engine.pointerUp({ x: pos.x, y: pos.y, timestamp: performance.now() });
+  processEvents();
+  scheduleRender();
+});
+
+touchSurface.addEventListener('pointercancel', (e) => {
+  if (!isDown) return;
+  isDown = false;
+  engine.pointerUp({ x: 0, y: 0, timestamp: performance.now() });
+  processEvents();
+  scheduleRender();
+});
+
+// ── Event processing ──────────────────────────────────────
+
+function processEvents() {
+  const events = engine.consumeEvents();
+  for (const ev of events) {
+    if (ev.type === 'letter_committed' || ev.type === 'flick_confirmed') {
+      committedText += ev.key;
+      lastAnchorId = ev.key;
+    }
+  }
+  committedEl.textContent = committedText;
+}
+
+// ── Render loop ───────────────────────────────────────────
+
+let renderPending = false;
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(render);
+  // Fallback: if rAF doesn't fire (headless), use setTimeout
+  setTimeout(render, 16);
+}
+
+function render() {
+  renderPending = false;
+  try { _renderInner(); } catch (e) { console.error('render error:', e); }
+}
+
+function _renderInner() {
+  const model = engine.getRenderModel();
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Reset key classes
+  for (const [id, el] of keyEls) {
+    el.className = 'key';
+  }
+
+  if (!model.sessionActive) {
+    // Idle state — show last anchor if any
+    if (lastAnchorId) {
+      const el = keyEls.get(lastAnchorId);
+      if (el) el.classList.add('anchor');
+    }
+    updateReadout(null);
+    return;
+  }
+
+  const ax = model.anchorMarker.x;
+  const ay = model.anchorMarker.y;
+  const px = model.pointerMarker.x;
+  const py = model.pointerMarker.y;
+
+  const dx = px - ax;
+  const dy = py - ay;
+  const dist = Math.hypot(dx, dy);
+  const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  const direction = SteerPopEngine.classifyDirection(dx, dy, THRESHOLD_RATIO);
+  const ratio = absDx > 0.001 ? absDy / absDx : Infinity;
+  const isVertical = absDy > absDx * THRESHOLD_RATIO;
+
+  // ── Draw direction zones (wedges from anchor) ──────────
+
+  const zoneRadius = Math.max(160, dist + 40);
+  drawZoneWedges(ax, ay, zoneRadius, direction);
+
+  // ── Draw row thresholds ────────────────────────────────
+
+  const rowSpacing = geometry.filter(k => k.row === 0)[0] ?
+    (geometry.find(k => k.row === 1)?.centerY || 0) - (geometry.find(k => k.row === 0)?.centerY || 0) : 55;
+  const rowThreshold = rowSpacing * 0.6;
+
+  // Row switch lines
+  ctx.setLineDash([4, 6]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 1;
+  for (let i = -2; i <= 2; i++) {
+    if (i === 0) continue;
+    const lineY = ay + i * rowSpacing;
+    if (lineY > 0 && lineY < canvas.height) {
+      ctx.beginPath();
+      ctx.moveTo(0, lineY);
+      ctx.lineTo(canvas.width, lineY);
+      ctx.stroke();
+    }
+  }
+  // Row switch threshold lines (where row actually switches)
+  ctx.strokeStyle = 'rgba(255,200,0,0.15)';
+  const threshUp = ay - rowThreshold;
+  const threshDown = ay + rowThreshold;
+  ctx.beginPath();
+  ctx.moveTo(0, threshUp); ctx.lineTo(canvas.width, threshUp);
+  ctx.moveTo(0, threshDown); ctx.lineTo(canvas.width, threshDown);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Draw angle line from anchor to pointer ─────────────
+
+  const dirColor = ZONE_COLORS[direction]?.light || '#888';
+
+  // Thick direction line
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(px, py);
+  ctx.strokeStyle = dirColor;
+  ctx.lineWidth = 3;
+  ctx.globalAlpha = 0.8;
+  ctx.stroke();
+  ctx.globalAlpha = 1.0;
+
+  // Anchor dot
+  ctx.beginPath();
+  ctx.arc(ax, ay, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#0d4a2a';
+  ctx.fill();
+  ctx.strokeStyle = '#4f8';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Pointer dot
+  ctx.beginPath();
+  ctx.arc(px, py, 5, 0, Math.PI * 2);
+  ctx.fillStyle = dirColor;
+  ctx.globalAlpha = 0.7;
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
+
+  // Deadzone circle
+  const dz = engine.cfg.deadzoneRadius;
+  ctx.beginPath();
+  ctx.arc(ax, ay, dz, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Angle arc indicator ────────────────────────────────
+
+  if (dist > dz + 5) {
+    const angleRad = Math.atan2(dy, dx);
+    const arcRadius = Math.min(40, dist * 0.4);
+    ctx.beginPath();
+    ctx.arc(ax, ay, arcRadius, 0, angleRad, angleRad < 0);
+    ctx.strokeStyle = dirColor;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+
+    // Angle text near arc
+    const textAngle = angleRad * 0.5;
+    const textR = arcRadius + 14;
+    ctx.font = '11px monospace';
+    ctx.fillStyle = dirColor;
+    ctx.globalAlpha = 0.8;
+    ctx.fillText(
+      angleDeg.toFixed(1) + '°',
+      ax + Math.cos(textAngle) * textR - 12,
+      ay + Math.sin(textAngle) * textR + 4
+    );
+    ctx.globalAlpha = 1.0;
+  }
+
+  // ── Highlight keys ─────────────────────────────────────
+
+  // Anchor key
+  const anchorState = engine.getState();
+  if (anchorState.anchorKey) {
+    const el = keyEls.get(anchorState.anchorKey);
+    if (el) el.classList.add('anchor');
+  }
+
+  // Candidate keys
+  for (const c of model.candidates) {
+    const el = keyEls.get(c.id);
+    if (!el) continue;
+    if (c.isTop) {
+      el.classList.add('top-candidate');
+    } else {
+      el.classList.add('candidate');
+    }
+  }
+
+  // Show which keys are in the "wrong direction" from this anchor
+  if (anchorState.anchorKey && dist > dz) {
+    const anchorMap = transitionMap.get(anchorState.anchorKey);
+    if (anchorMap) {
+      for (const [tgtId, info] of anchorMap) {
+        if (info.status === 'wrong_direction' || info.status === 'unreachable') {
+          const el = keyEls.get(tgtId);
+          if (el && !el.classList.contains('candidate') && !el.classList.contains('top-candidate')) {
+            el.classList.add('wrong-dir');
+          }
+        }
+      }
+    }
+  }
+
+  // ── Draw candidate connection lines ────────────────────
+
+  for (const c of model.candidates) {
+    const key = geometry.find(k => k.id === c.id);
+    if (!key) continue;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(key.centerX, key.centerY);
+    ctx.strokeStyle = c.isTop ? 'rgba(68,255,136,0.35)' : 'rgba(136,170,204,0.15)';
+    ctx.lineWidth = c.isTop ? 2 : 1;
+    ctx.stroke();
+  }
+
+  // ── Update side panel ──────────────────────────────────
+
+  updateReadout({ angleDeg, direction, dist, ratio, isVertical, dx, dy, absDx, absDy });
+  updateAngleMath({ angleDeg, direction, dist, ratio, isVertical, dx, dy, absDx, absDy, anchorKey: anchorState.anchorKey });
+  updateCandidateList(model.candidates);
+  updateTransitionInfo(anchorState.anchorKey, model.candidates, direction);
+  updateZoneLegend(direction);
+}
+
+// ── Zone wedge drawing ────────────────────────────────────
+
+function drawZoneWedges(cx, cy, radius, activeDir) {
+  // Boundary angle in radians
+  const bRad = BOUNDARY_ANGLE * (Math.PI / 180);
+
+  // Right zone: -bRad to +bRad (centered on 0)
+  drawWedge(cx, cy, radius, -bRad, bRad, 'right', activeDir);
+  // Left zone: π-bRad to π+bRad (centered on π)
+  drawWedge(cx, cy, radius, Math.PI - bRad, Math.PI + bRad, 'left', activeDir);
+  // Down zone: bRad to π-bRad (centered on π/2)
+  drawWedge(cx, cy, radius, bRad, Math.PI - bRad, 'down', activeDir);
+  // Up zone: -(π-bRad) to -bRad (centered on -π/2)
+  drawWedge(cx, cy, radius, -Math.PI + bRad, -bRad, 'up', activeDir);
+
+  // Draw boundary lines (the threshold diagonals)
+  ctx.setLineDash([2, 4]);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  for (const angle of [bRad, -bRad, Math.PI - bRad, Math.PI + bRad]) {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+function drawWedge(cx, cy, radius, startAngle, endAngle, dir, activeDir) {
+  const colors = ZONE_COLORS[dir];
+  const isActive = dir === activeDir;
+
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, radius, startAngle, endAngle);
+  ctx.closePath();
+  ctx.fillStyle = isActive ? colors.fill.replace('0.08', '0.18') : colors.fill;
+  ctx.fill();
+
+  // Zone label
+  const midAngle = (startAngle + endAngle) / 2;
+  const labelR = radius * 0.7;
+  ctx.font = isActive ? 'bold 13px monospace' : '11px monospace';
+  ctx.fillStyle = isActive ? colors.light : 'rgba(255,255,255,0.15)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    dir.toUpperCase(),
+    cx + Math.cos(midAngle) * labelR,
+    cy + Math.sin(midAngle) * labelR
+  );
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// ── UI updates ────────────────────────────────────────────
+
+function updateReadout(data) {
+  if (!data) {
+    readoutEl.innerHTML = '<span class="label" style="color:#555">Idle</span>';
+    return;
+  }
+  const dirClass = 'dir-' + data.direction;
+  readoutEl.innerHTML =
+    `<span>angle: <span class="val">${data.angleDeg.toFixed(1)}°</span></span>` +
+    `<span>dist: <span class="val">${data.dist.toFixed(0)}px</span></span>` +
+    `<span>dy/dx: <span class="val ${data.isVertical ? 'warn' : ''}">${data.ratio.toFixed(2)}</span></span>` +
+    `<span>dir: <span class="val dir-label ${dirClass}">${data.direction}</span></span>`;
+}
+
+function updateAngleMath(d) {
+  if (!d.anchorKey) {
+    angleMathEl.innerHTML = '<span class="label">Touch a key to start</span>';
+    return;
+  }
+
+  const thresholdMet = d.isVertical;
+  const margin = Math.abs(d.absDy - d.absDx * THRESHOLD_RATIO);
+  const marginPct = d.absDx > 0 ? (margin / (d.absDx * THRESHOLD_RATIO) * 100) : 0;
+  const isClose = marginPct < 20 && d.dist > 10;
+
+  angleMathEl.innerHTML =
+    `<div><span class="label">anchor:</span> <span class="highlight">${d.anchorKey}</span></div>` +
+    `<div><span class="label">dx:</span> <span class="value">${d.dx.toFixed(1)}</span>` +
+    ` <span class="label">dy:</span> <span class="value">${d.dy.toFixed(1)}</span></div>` +
+    `<div><span class="label">|dy|:</span> <span class="value">${d.absDy.toFixed(1)}</span>` +
+    ` <span class="label">|dx|×1.2:</span> <span class="value">${(d.absDx * THRESHOLD_RATIO).toFixed(1)}</span></div>` +
+    `<div><span class="label">test:</span> ` +
+    `<span class="${thresholdMet ? 'warn' : 'highlight'}">${d.absDy.toFixed(1)} ${thresholdMet ? '>' : '≤'} ${(d.absDx * THRESHOLD_RATIO).toFixed(1)}</span>` +
+    ` → <span class="${thresholdMet ? 'warn' : 'highlight'}">${thresholdMet ? 'VERTICAL' : 'HORIZONTAL'}</span></div>` +
+    `<div><span class="label">margin:</span> <span class="${isClose ? 'warn' : 'value'}">${margin.toFixed(1)}px ${isClose ? '⚠ CLOSE' : ''}</span></div>` +
+    `<div><span class="label">angle:</span> <span class="value">${d.angleDeg.toFixed(1)}°</span></div>`;
+}
+
+function updateCandidateList(candidates) {
+  if (!candidates || candidates.length === 0) {
+    candidateListEl.innerHTML = '<span style="color:#555">No candidates</span>';
+    return;
+  }
+
+  const maxScore = Math.max(...candidates.map(c => c.brightness || 0), 0.01);
+  candidateListEl.innerHTML = candidates.map(c => {
+    const barW = Math.round((c.brightness / maxScore) * 100);
+    const isTop = c.isTop;
+    return `<div class="cand-row ${isTop ? 'top' : ''}">` +
+      `<span class="cand-key">${c.id}</span>` +
+      `<div class="cand-bar" style="width:${barW}px"></div>` +
+      `<span style="font-size:10px;color:#555">${(c.brightness * 100).toFixed(0)}%</span>` +
+      `</div>`;
+  }).join('');
+}
+
+function updateTransitionInfo(anchorKey, candidates, direction) {
+  if (!anchorKey) {
+    transitionInfoEl.innerHTML = '<span class="label">Flick to commit, then slide for next letter</span>';
+    return;
+  }
+
+  const anchorMap = transitionMap.get(anchorKey);
+  if (!anchorMap) return;
+
+  // Count reachability from this anchor
+  let direct = 0, reachable = 0, wrongDir = 0, unreachable = 0;
+  for (const [, info] of anchorMap) {
+    if (info.status === 'direct') direct++;
+    else if (info.status === 'reachable') reachable++;
+    else if (info.status === 'wrong_direction') wrongDir++;
+    else if (info.status === 'unreachable') unreachable++;
+  }
+
+  let html =
+    `<div><span class="label">From</span> <span class="highlight">${anchorKey}</span></div>` +
+    `<div style="color:#4f8">direct: ${direct}</div>` +
+    `<div style="color:#ed3">reachable: ${reachable}</div>`;
+  if (wrongDir > 0) html += `<div style="color:#f55">wrong dir: ${wrongDir}</div>`;
+  if (unreachable > 0) html += `<div style="color:#f55">unreachable: ${unreachable}</div>`;
+
+  // Show top candidate's transition info
+  const topCand = candidates.find(c => c.isTop);
+  if (topCand) {
+    const info = anchorMap.get(topCand.id);
+    if (info) {
+      html += `<div style="margin-top:4px"><span class="label">→${topCand.id}:</span> ` +
+        `<span class="value">${info.angle.toFixed(1)}° ${info.status}</span></div>`;
+    }
+  }
+
+  transitionInfoEl.innerHTML = html;
+}
+
+function updateZoneLegend(activeDir) {
+  for (const row of zoneLegend.children) {
+    const dir = row.dataset.dir;
+    const info = row.querySelector('.zone-info');
+    if (dir === activeDir) {
+      info.classList.add('zone-active');
+    } else {
+      info.classList.remove('zone-active');
+    }
+  }
+}
+
+// ── Start ─────────────────────────────────────────────────
+
+// Expose for debugging (used by test harness)
+window._vizEngine = engine;
+window._vizProcessEvents = processEvents;
+window._vizRender = render;
+
+scheduleRender();
+</script>
+</body>
+</html>

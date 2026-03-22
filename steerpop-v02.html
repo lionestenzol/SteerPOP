@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SteerPop v0.2 — Floating Probability Field</title>
+<style>
+/* ============================================================
+   RESET & DESIGN TOKENS
+============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* palette */
+  --bg:           #080a0d;
+  --surface:      #0e1118;
+  --surface2:     #12161f;
+  --border:       #1a2030;
+  --border2:      #232c40;
+  --key-bg:       #131820;
+  --key-border:   #1e2840;
+  --key-text:     #8898b8;
+  --text:         #c4cedf;
+  --muted:        #3d4a62;
+  --accent:       #00d4ff;       /* cyan */
+  --accent2:      #8b5cf6;       /* violet */
+  --commit-col:   #00ffaa;       /* mint green */
+  --armed-col:    #ffb700;       /* amber when armed */
+  --danger:       #ff4455;
+  --suggest-col:  #c084fc;       /* soft purple for suggestion */
+
+  /* type */
+  --font-mono: 'Courier New', monospace;
+  --font-ui:   'Trebuchet MS', sans-serif;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px 48px;
+  user-select: none;
+  cursor: crosshair;
+  /* subtle noise texture via SVG data URI */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+}
+
+/* ============================================================
+   HEADER
+============================================================ */
+.header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.header h1 {
+  font-size: 1.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  background: linear-gradient(100deg, var(--accent) 0%, var(--accent2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header-sub {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-top: 5px;
+}
+.version-badge {
+  display: inline-block;
+  background: var(--border2);
+  color: var(--accent);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--border2);
+  margin-top: 6px;
+}
+
+/* ============================================================
+   OUTPUT BAR
+============================================================ */
+.output-area {
+  width: 100%;
+  max-width: 820px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.output-label {
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+#output-text {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--accent);
+  min-height: 26px;
+  letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 2px;
+  word-break: break-all;
+}
+#output-text::after {
+  content: '▍';
+  animation: blink 1s step-end infinite;
+  color: var(--accent2);
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.btn-clear {
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 0.15s;
+}
+.btn-clear:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ============================================================
+   MAIN LAYOUT
+============================================================ */
+.main-layout {
+  width: 100%;
+  max-width: 960px;
+  display: grid;
+  grid-template-columns: 1fr 250px;
+  gap: 16px;
+  align-items: start;
+}
+
+/* ============================================================
+   KEYBOARD WRAP  (canvas + keys stack here)
+============================================================ */
+.keyboard-wrap {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 14px 18px;
+  /* overflow visible so floating halo can extend above keyboard */
+  overflow: visible;
+}
+
+/* Inner clipping layer for the keyboard keys only */
+.key-layer {
+  position: relative;
+  z-index: 1;
+}
+
+/* ============================================================
+   KEYBOARD KEYS
+============================================================ */
+.kb-row {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.key {
+  width: 50px;
+  height: 50px;
+  background: var(--key-bg);
+  border: 1px solid var(--key-border);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--key-text);
+  cursor: crosshair;
+  position: relative;
+  z-index: 2;
+  transition: background 0.1s, border-color 0.15s, color 0.15s;
+  -webkit-user-drag: none;
+  /* very subtle inset shadow for depth */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 4px rgba(0,0,0,0.4);
+}
+.key.anchor-active {
+  background: rgba(0,212,255,0.1);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 10px rgba(0,212,255,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* ============================================================
+   HALO CANVAS  (overlaps keyboard-wrap, goes above it too)
+============================================================ */
+#halo-canvas {
+  position: absolute;
+  /* extend upward so the floating halo is never clipped */
+  top: -140px;
+  left: -20px;
+  right: -20px;
+  bottom: -20px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* ============================================================
+   COMMIT FLASH
+============================================================ */
+#commit-flash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  background: var(--commit-col);
+  transition: opacity 0.06s;
+}
+#commit-flash.flash { opacity: 0.07; }
+
+/* ============================================================
+   SIDE PANEL
+============================================================ */
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.panel-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+.panel-title {
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Sliders */
+.ctrl-row { display: flex; flex-direction: column; gap: 9px; }
+.ctrl-item { display: flex; flex-direction: column; gap: 4px; }
+.ctrl-item label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.ctrl-item label span {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%; height: 3px;
+  background: var(--border2);
+  border-radius: 2px;
+  outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 5px rgba(0,212,255,0.5);
+}
+
+/* Toggles */
+.toggle-row { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+.toggle-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.switch { position: relative; width: 30px; height: 16px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider-sw {
+  position: absolute; inset: 0;
+  background: var(--border2);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.slider-sw::before {
+  content: '';
+  position: absolute;
+  width: 10px; height: 10px;
+  left: 3px; top: 3px;
+  background: var(--muted);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.switch input:checked + .slider-sw { background: rgba(0,212,255,0.25); }
+.switch input:checked + .slider-sw::before {
+  transform: translateX(14px);
+  background: var(--accent);
+}
+
+/* Debug panel */
+.debug-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.debug-cell {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 9px;
+}
+.debug-cell.full { grid-column: 1 / -1; }
+.d-label {
+  font-size: 0.56rem;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.d-value {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text);
+}
+.d-accent    { color: var(--accent); }
+.d-commit    { color: var(--commit-col); }
+.d-armed     { color: var(--armed-col); }
+.d-muted     { color: var(--muted); }
+.d-suggest   { color: var(--suggest-col); }
+</style>
+</head>
+<body>
+
+<div id="commit-flash"></div>
+
+<!-- ============================================================
+     HEADER
+============================================================ -->
+<div class="header">
+  <h1>SteerPop</h1>
+  <div class="header-sub">Floating Probability Field · Motion-First Input</div>
+  <div class="version-badge">v0.2</div>
+</div>
+
+<!-- ============================================================
+     OUTPUT BAR
+============================================================ -->
+<div class="output-area">
+  <div class="output-label">Out</div>
+  <div id="output-text"></div>
+  <button class="btn-clear" id="btn-clear">Clear</button>
+</div>
+
+<!-- ============================================================
+     MAIN LAYOUT
+============================================================ -->
+<div class="main-layout">
+
+  <!-- KEYBOARD + CANVAS -->
+  <div class="keyboard-wrap" id="keyboard-wrap">
+
+    <!-- Canvas extends above the keyboard wrap for the floating halo -->
+    <canvas id="halo-canvas"></canvas>
+
+    <!-- Key rows -->
+    <div class="key-layer">
+      <div class="kb-row" id="row-0"></div>
+      <div class="kb-row" id="row-1"></div>
+      <div class="kb-row" id="row-2"></div>
+    </div>
+
+  </div>
+
+  <!-- SIDE PANEL -->
+  <div class="side-panel">
+
+    <!-- Controls -->
+    <div class="panel-card">
+      <div class="panel-title">Controls</div>
+      <div class="ctrl-row">
+        <div class="ctrl-item">
+          <label>Bubble Size <span id="lbl-bubble">36</span></label>
+          <input type="range" id="ctrl-bubble" min="22" max="56" value="36" />
+        </div>
+        <div class="ctrl-item">
+          <label>Candidates <span id="lbl-candidates">8</span></label>
+          <input type="range" id="ctrl-candidates" min="4" max="12" value="8" />
+        </div>
+        <div class="ctrl-item">
+          <label>Halo Offset <span id="lbl-offset">90</span>px</label>
+          <input type="range" id="ctrl-offset" min="40" max="160" value="90" />
+        </div>
+        <div class="ctrl-item">
+          <label>Hysteresis <span id="lbl-hysteresis">0.35</span></label>
+          <input type="range" id="ctrl-hysteresis" min="0.05" max="0.9" step="0.05" value="0.35" />
+        </div>
+        <div class="ctrl-item">
+          <label>Pop Radius <span id="lbl-popradius">65</span>px</label>
+          <input type="range" id="ctrl-popradius" min="25" max="140" value="65" />
+        </div>
+        <div class="ctrl-item">
+          <label>Cooldown <span id="lbl-cooldown">400</span>ms</label>
+          <input type="range" id="ctrl-cooldown" min="100" max="1000" step="50" value="400" />
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-item">Show Halo
+          <label class="switch"><input type="checkbox" id="tog-halo" checked /><span class="slider-sw"></span></label>
+        </div>
+        <div class="toggle-item">Pop Ring
+          <label class="switch"><input type="checkbox" id="tog-ring" checked /><span class="slider-sw"></span></label>
+        </div>
+        <div class="toggle-item">Suggestion Console
+          <label class="switch"><input type="checkbox" id="tog-suggest" checked /><span class="slider-sw"></span></label>
+        </div>
+        <div class="toggle-item">Debug Labels
+          <label class="switch"><input type="checkbox" id="tog-debug-labels" /><span class="slider-sw"></span></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug -->
+    <div class="panel-card">
+      <div class="panel-title">Debug</div>
+      <div class="debug-grid">
+        <div class="debug-cell">
+          <div class="d-label">Session</div>
+          <div class="d-value d-accent" id="dbg-session">IDLE</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Anchor</div>
+          <div class="d-value d-accent" id="dbg-anchor">—</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Target</div>
+          <div class="d-value d-accent" id="dbg-target">—</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Distance</div>
+          <div class="d-value" id="dbg-dist">0 px</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Pop State</div>
+          <div class="d-value d-muted" id="dbg-popstate">IDLE</div>
+        </div>
+        <div class="debug-cell">
+          <div class="d-label">Cooldown</div>
+          <div class="d-value d-muted" id="dbg-cooldown">—</div>
+        </div>
+        <div class="debug-cell full">
+          <div class="d-label">Last Commit</div>
+          <div class="d-value d-commit" id="dbg-last">—</div>
+        </div>
+        <div class="debug-cell full">
+          <div class="d-label">Suggestion</div>
+          <div class="d-value d-suggest" id="dbg-suggest">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- How to use -->
+    <div class="panel-card" style="font-size:0.68rem; color:var(--muted); line-height:1.8; letter-spacing:0.03em;">
+      <strong style="color:var(--text); display:block; margin-bottom:6px;">How to use</strong>
+      <strong style="color:var(--text);">Hold</strong> a key → halo floats above.<br/>
+      <strong style="color:var(--text);">Steer</strong> toward a bubble → it brightens.<br/>
+      <strong style="color:var(--text);">Push past</strong> pop ring → arm state.<br/>
+      <strong style="color:var(--text);">Continue outward</strong> → letter commits.<br/>
+      <strong style="color:var(--text);">Stay held</strong> → keep typing.<br/>
+      <strong style="color:var(--text);">Steer up</strong> → accept word suggestion.
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   SECTION 1 — KEYBOARD LAYOUT
+   Three QWERTY rows. After DOM paint we cache each key's
+   center coordinate for all spatial math.
+============================================================ */
+
+const ROWS = [
+  ['Q','W','E','R','T','Y','U','I','O','P'],
+  ['A','S','D','F','G','H','J','K','L'],
+  ['Z','X','C','V','B','N','M'],
+];
+
+// keyMap: letter → { el, cx, cy }  (cx/cy filled after layout)
+const keyMap = {};
+
+ROWS.forEach((row, ri) => {
+  const rowEl = document.getElementById(`row-${ri}`);
+  row.forEach(letter => {
+    const el = document.createElement('div');
+    el.className = 'key';
+    el.textContent = letter;
+    el.dataset.key = letter;
+    rowEl.appendChild(el);
+    keyMap[letter] = { el, cx: 0, cy: 0 };
+  });
+});
+
+// Compute key center positions relative to the keyboard-wrap element
+const kbWrap = document.getElementById('keyboard-wrap');
+
+function computeKeyPositions() {
+  const wrapRect = kbWrap.getBoundingClientRect();
+  Object.entries(keyMap).forEach(([, data]) => {
+    const r = data.el.getBoundingClientRect();
+    data.cx = r.left - wrapRect.left + r.width  / 2;
+    data.cy = r.top  - wrapRect.top  + r.height / 2;
+  });
+}
+
+window.addEventListener('resize', () => { resizeCanvas(); computeKeyPositions(); });
+setTimeout(computeKeyPositions, 80);
+
+
+/* ============================================================
+   SECTION 2 — CANVAS SETUP
+   Canvas is larger than the keyboard-wrap (extends upward)
+   so the floating halo is never clipped.
+   CANVAS_TOP_OFFSET must match the CSS top: -140px on #halo-canvas.
+============================================================ */
+
+const canvas = document.getElementById('halo-canvas');
+const ctx    = canvas.getContext('2d');
+const CANVAS_TOP_OFFSET = 140; // px the canvas extends above the wrap
+const CANVAS_SIDE_PAD   = 20;
+
+function resizeCanvas() {
+  canvas.width  = kbWrap.offsetWidth  + CANVAS_SIDE_PAD * 2;
+  canvas.height = kbWrap.offsetHeight + CANVAS_TOP_OFFSET + 20;
+}
+resizeCanvas();
+
+// Convert wrap-relative coords to canvas coords
+function wrapToCanvas(x, y) {
+  return { cx: x + CANVAS_SIDE_PAD, cy: y + CANVAS_TOP_OFFSET };
+}
+
+
+/* ============================================================
+   SECTION 3 — CONFIGURATION (live-bound to controls)
+============================================================ */
+
+const cfg = {
+  bubbleRadius:    36,    // base bubble radius in px
+  candidateCount:  8,     // how many nearest-neighbor candidates
+  haloOffset:      90,    // px the halo floats ABOVE the cursor
+  hysteresis:      0.35,  // score delta needed to switch active target
+  popRadius:       65,    // px from anchor to arm pop
+  cooldownMs:      400,   // ms between commits
+  showHalo:        true,
+  showPopRing:     true,
+  showSuggest:     true,
+  showDebugLabels: false,
+};
+
+function bindSlider(id, lblId, prop, parseFn = parseFloat) {
+  const el = document.getElementById(id);
+  const lb = document.getElementById(lblId);
+  el.addEventListener('input', () => {
+    cfg[prop] = parseFn(el.value);
+    lb.textContent = el.value;
+  });
+}
+bindSlider('ctrl-bubble',     'lbl-bubble',     'bubbleRadius',   parseInt);
+bindSlider('ctrl-candidates', 'lbl-candidates', 'candidateCount', parseInt);
+bindSlider('ctrl-offset',     'lbl-offset',     'haloOffset',     parseInt);
+bindSlider('ctrl-hysteresis', 'lbl-hysteresis', 'hysteresis');
+bindSlider('ctrl-popradius',  'lbl-popradius',  'popRadius',      parseInt);
+bindSlider('ctrl-cooldown',   'lbl-cooldown',   'cooldownMs',     parseInt);
+
+document.getElementById('tog-halo').addEventListener('change',         e => cfg.showHalo        = e.target.checked);
+document.getElementById('tog-ring').addEventListener('change',         e => cfg.showPopRing     = e.target.checked);
+document.getElementById('tog-suggest').addEventListener('change',      e => cfg.showSuggest     = e.target.checked);
+document.getElementById('tog-debug-labels').addEventListener('change', e => cfg.showDebugLabels = e.target.checked);
+
+
+/* ============================================================
+   SECTION 4 — SUGGESTION SYSTEM
+   Simple lookup table for demo word completions.
+   Real NLP not required — just a plausible simulation.
+============================================================ */
+
+// Map of 2-letter suffix → full suggested word
+const SUGGESTION_MAP = {
+  'HE': 'hello',  'TH': 'the',   'YO': 'you',
+  'IT': 'it',     'IN': 'into',  'AN': 'and',
+  'IS': 'is',     'WO': 'world', 'BE': 'be',
+  'FO': 'for',    'HA': 'have',  'AR': 'are',
+  'CA': 'can',    'NO': 'not',   'WI': 'will',
+  'GO': 'good',   'SO': 'so',    'DO': 'do',
+  'ON': 'one',    'WH': 'what',  'MY': 'my',
+  'LO': 'love',   'ME': 'me',    'US': 'use',
+};
+
+// Compute the current suggestion based on the last 2 typed chars
+function computeSuggestion(text) {
+  if (text.length < 2) return null;
+  const suffix = text.slice(-2).toUpperCase();
+  return SUGGESTION_MAP[suffix] || null;
+}
+
+// The suggestion console is a virtual target in canvas space
+// positioned above the center of the halo.
+// Returns canvas-space {cx, cy} for the suggestion pill center.
+function getSuggestionCanvasPos() {
+  if (!state.active) return null;
+  const hc = wrapToCanvas(state.anchorCx, state.anchorCy);
+  return {
+    cx: canvas.width / 2,
+    cy: hc.cy - cfg.haloOffset - cfg.bubbleRadius * 2.2,
+  };
+}
+
+
+/* ============================================================
+   SECTION 5 — INTERACTION STATE
+   All mutable session state is here. Never spread it
+   into locals; always mutate state.* so the render loop
+   sees consistent values.
+============================================================ */
+
+const state = {
+  // session
+  active:        false,
+  anchorKey:     null,
+  anchorCx:      0,       // wrap-relative
+  anchorCy:      0,
+
+  // pointer tracking
+  mouseX:        0,       // wrap-relative
+  mouseY:        0,
+  prevMouseX:    0,
+  prevMouseY:    0,
+  velocity:      0,       // magnitude of recent movement
+
+  // candidates
+  candidates:    [],      // [{letter, wrapCx, wrapCy, canvasCx, canvasCy, score, tier, isActive}]
+  activeTarget:  null,
+  activeScore:   -Infinity,
+
+  // pop state machine: 'idle' | 'armed' | 'fired' | 'cooldown'
+  popState:      'idle',
+  cooldownTimer: null,
+
+  // suggestion
+  suggestion:    null,    // current word suggestion string or null
+  suggestArmed:  false,   // user steering toward suggestion target
+
+  // output
+  outputText:    '',
+  lastCommit:    null,
+};
+
+
+/* ============================================================
+   SECTION 6 — CANDIDATE GENERATION
+   Finds the N spatially nearest keys to the anchor.
+   Returns them with halo positions (arranged in a forward fan
+   that opens upward and to the sides, toward the user's view).
+============================================================ */
+
+function generateCandidates(anchorLetter) {
+  const anchor = keyMap[anchorLetter];
+  if (!anchor) return [];
+
+  // Distance from anchor to every other key
+  const all = Object.entries(keyMap)
+    .filter(([l]) => l !== anchorLetter)
+    .map(([letter, data]) => {
+      const dx = data.cx - anchor.cx;
+      const dy = data.cy - anchor.cy;
+      return { letter, dx, dy, dist: Math.hypot(dx, dy) };
+    });
+
+  all.sort((a, b) => a.dist - b.dist);
+  const chosen = all.slice(0, cfg.candidateCount);
+
+  // --- Floating halo layout ---
+  // Arrange chosen candidates in a fan arc centered ABOVE the anchor.
+  // The arc spans from ~-160° to ~-20° (top half), so bubbles float upward.
+  const count  = chosen.length;
+  const arcMin = -Math.PI * 0.9;    // leftmost angle (pointing upper-left)
+  const arcMax = -Math.PI * 0.1;    // rightmost angle (pointing upper-right)
+  const haloR  = cfg.bubbleRadius * 2.8; // orbital radius of the fan
+
+  return chosen.map((item, i) => {
+    // Spread candidates evenly across the arc
+    const t     = count > 1 ? i / (count - 1) : 0.5;
+    const angle = arcMin + t * (arcMax - arcMin);
+    // Position relative to anchor (wrap coords), offset upward by haloOffset
+    const haloX = anchor.cx + Math.cos(angle) * haloR;
+    const haloY = anchor.cy - cfg.haloOffset + Math.sin(angle) * haloR * 0.5;
+
+    const cc = wrapToCanvas(haloX, haloY);
+    return {
+      letter:    item.letter,
+      wrapCx:    haloX,
+      wrapCy:    haloY,
+      canvasCx:  cc.cx,
+      canvasCy:  cc.cy,
+      score:     0,
+      tier:      2,      // 0=active, 1=near, 2=weak
+      isActive:  false,
+    };
+  });
+}
+
+
+/* ============================================================
+   SECTION 7 — SCORING  (targeting logic)
+   Scores each candidate bubble based on:
+   - Proximity: how close is the cursor to the bubble?
+   - Alignment: does the cursor direction from anchor point toward it?
+   - Velocity weight: faster movement biases toward aligned targets.
+   Hysteresis prevents flicker.
+============================================================ */
+
+function scoreCandidates() {
+  if (!state.candidates.length) return;
+
+  const dx = state.mouseX - state.anchorCx;
+  const dy = state.mouseY - state.anchorCy;
+  const cursorDist = Math.hypot(dx, dy);
+
+  // Cursor movement unit vector
+  const udx = cursorDist > 1 ? dx / cursorDist : 0;
+  const udy = cursorDist > 1 ? dy / cursorDist : 0;
+
+  // Velocity factor (higher velocity → more weight on direction)
+  const velFactor = Math.min(state.velocity / 8, 1);
+
+  let best = { score: -Infinity, letter: null };
+
+  state.candidates.forEach(c => {
+    // Direction from anchor to halo bubble position (not key position)
+    const cdx = c.wrapCx - state.anchorCx;
+    const cdy = c.wrapCy - state.anchorCy;
+    const cDist = Math.hypot(cdx, cdy);
+
+    // Alignment: dot product between cursor direction and bubble direction
+    const alignment = cDist > 1
+      ? (cdx / cDist) * udx + (cdy / cDist) * udy
+      : 0;
+
+    // Proximity to the actual halo bubble position
+    const toHaloDx = c.wrapCx - state.mouseX;
+    const toHaloDy = c.wrapCy - state.mouseY;
+    const proxDist = Math.hypot(toHaloDx, toHaloDy);
+    const proxScore = 1 / (1 + proxDist * 0.035);
+
+    // Blend proximity and directional alignment; velocity shifts weight to alignment
+    const moveFactor = Math.min(cursorDist / (cfg.popRadius * 0.6), 1);
+    const dirWeight  = moveFactor * (0.5 + velFactor * 0.3);
+    c.score = proxScore * (1 - dirWeight) + alignment * dirWeight;
+
+    if (c.score > best.score) { best.score = c.score; best.letter = c.letter; }
+  });
+
+  // Hysteresis gate: only update active target if new winner beats old by threshold
+  if (
+    best.letter !== state.activeTarget &&
+    best.score > state.activeScore + cfg.hysteresis * 0.6
+  ) {
+    state.activeTarget = best.letter;
+    state.activeScore  = best.score;
+  }
+
+  // Assign tiers based on score rank
+  const sorted = [...state.candidates].sort((a, b) => b.score - a.score);
+  sorted.forEach((c, i) => {
+    c.tier = i === 0 ? 0 : i <= 2 ? 1 : 2;
+    c.isActive = c.letter === state.activeTarget;
+  });
+}
+
+
+/* ============================================================
+   SECTION 8 — POP STATE MACHINE
+   States:
+     idle     → cursor near anchor, nothing armed
+     armed    → cursor crossed popRadius, pop ready if deliberate
+     fired    → commit was just sent, brief cooldown begins
+     cooldown → waiting before another commit is allowed
+
+   Transition rules:
+     idle    → armed  : dist >= popRadius
+     armed   → idle   : dist < popRadius * 0.7  (pull back disarms)
+     armed   → fired  : deliberate outward intent detected
+     fired   → cooldown: immediately
+     cooldown→ idle   : timer expires
+============================================================ */
+
+function updatePopStateMachine() {
+  if (!state.active) return;
+
+  const dx = state.mouseX - state.anchorCx;
+  const dy = state.mouseY - state.anchorCy;
+  const dist = Math.hypot(dx, dy);
+
+  // --- Check suggestion steering ---
+  // If suggestion exists, check if cursor is aimed at the suggestion pill
+  if (cfg.showSuggest && state.suggestion) {
+    const sp = getSuggestionCanvasPos();
+    if (sp) {
+      // Convert suggestion canvas pos to wrap coords
+      const sWrapX = sp.cx - CANVAS_SIDE_PAD;
+      const sWrapY = sp.cy - CANVAS_TOP_OFFSET;
+      const sdx = sWrapX - state.mouseX;
+      const sdy = sWrapY - state.mouseY;
+      const sDist = Math.hypot(sdx, sdy);
+      state.suggestArmed = sDist < cfg.bubbleRadius * 2.2;
+
+      if (state.suggestArmed && state.popState === 'idle') {
+        // Steering into the suggestion pill — treat like a pop toward suggestion
+        if (dist >= cfg.popRadius * 0.5) {
+          commitSuggestion();
+          return;
+        }
+      }
+    }
+  } else {
+    state.suggestArmed = false;
+  }
+
+  if (state.popState === 'cooldown') return; // waiting out cooldown
+
+  if (state.popState === 'idle') {
+    if (dist >= cfg.popRadius) {
+      state.popState = 'armed';
+    }
+    return;
+  }
+
+  if (state.popState === 'armed') {
+    // Disarm if user pulls back inside inner threshold
+    if (dist < cfg.popRadius * 0.7) {
+      state.popState = 'idle';
+      return;
+    }
+
+    // Deliberate outward intent: check alignment of cursor direction with active target
+    if (state.activeTarget) {
+      const target = keyMap[state.activeTarget];
+      if (target) {
+        const tdx = target.cx - state.anchorCx;
+        const tdy = target.cy - state.anchorCy;
+        const tDist = Math.hypot(tdx, tdy);
+        const udx = dist > 0 ? dx / dist : 0;
+        const udy = dist > 0 ? dy / dist : 0;
+        const utdx = tDist > 0 ? tdx / tDist : 0;
+        const utdy = tDist > 0 ? tdy / tDist : 0;
+        const dot = udx * utdx + udy * utdy;
+
+        // Commit if alignment is strong enough
+        if (dot > 0.45 && dist > cfg.popRadius * 1.05) {
+          state.popState = 'fired';
+          commitLetter(state.activeTarget);
+        }
+      }
+    }
+  }
+}
+
+function enterCooldown() {
+  state.popState = 'cooldown';
+  clearTimeout(state.cooldownTimer);
+  state.cooldownTimer = setTimeout(() => {
+    if (state.active) {
+      state.popState = 'idle';
+    }
+  }, cfg.cooldownMs);
+}
+
+
+/* ============================================================
+   SECTION 9 — COMMIT FUNCTIONS
+============================================================ */
+
+function commitLetter(letter) {
+  if (!letter) return;
+
+  state.outputText += letter;
+  state.lastCommit  = letter;
+  document.getElementById('output-text').textContent = state.outputText;
+  document.getElementById('dbg-last').textContent    = letter;
+
+  // Flash
+  const flash = document.getElementById('commit-flash');
+  flash.classList.add('flash');
+  setTimeout(() => flash.classList.remove('flash'), 90);
+
+  // Reanchor on committed key
+  const newAnchor = keyMap[letter];
+  if (newAnchor) {
+    if (state.anchorKey) keyMap[state.anchorKey].el.classList.remove('anchor-active');
+    state.anchorKey  = letter;
+    state.anchorCx   = newAnchor.cx;
+    state.anchorCy   = newAnchor.cy;
+    newAnchor.el.classList.add('anchor-active');
+  }
+
+  // Reset halo for new anchor position
+  state.candidates   = generateCandidates(letter);
+  state.activeTarget = null;
+  state.activeScore  = -Infinity;
+  state.suggestArmed = false;
+
+  // Update suggestion based on new output
+  state.suggestion = computeSuggestion(state.outputText);
+
+  enterCooldown();
+}
+
+function commitSuggestion() {
+  if (!state.suggestion) return;
+
+  // Append remaining characters of the suggestion
+  // (the last 2 chars are already typed, so we append the rest)
+  const already  = state.outputText.slice(-2).toLowerCase();
+  const fullWord = state.suggestion;
+  const rest     = fullWord.startsWith(already) ? fullWord.slice(already.length) : fullWord;
+
+  state.outputText += rest + ' ';
+  state.lastCommit  = '[' + fullWord + ']';
+  document.getElementById('output-text').textContent = state.outputText;
+  document.getElementById('dbg-last').textContent    = state.lastCommit;
+
+  const flash = document.getElementById('commit-flash');
+  flash.classList.add('flash');
+  setTimeout(() => flash.classList.remove('flash'), 90);
+
+  // Clear suggestion and reset anchor to last letter of the word
+  const lastLetter = fullWord.slice(-1).toUpperCase();
+  const newAnchor  = keyMap[lastLetter];
+  if (newAnchor) {
+    if (state.anchorKey) keyMap[state.anchorKey].el.classList.remove('anchor-active');
+    state.anchorKey = lastLetter;
+    state.anchorCx  = newAnchor.cx;
+    state.anchorCy  = newAnchor.cy;
+    newAnchor.el.classList.add('anchor-active');
+  }
+
+  state.suggestion   = null;
+  state.suggestArmed = false;
+  state.candidates   = generateCandidates(state.anchorKey || lastLetter);
+  state.activeTarget = null;
+  state.activeScore  = -Infinity;
+
+  enterCooldown();
+}
+
+
+/* ============================================================
+   SECTION 10 — RENDERING
+   All drawing happens here on every animation frame.
+   Draw order:
+   1. Pop ring (threshold circle)
+   2. Faint connector line
+   3. Suggestion pill (if visible)
+   4. Candidate bubbles (back to front: weak → near → active)
+   5. Anchor dot
+   6. Cursor dot
+============================================================ */
+
+// Smoothed bubble position targets (for gentle animation)
+// We lerp each bubble's rendered position toward its target each frame.
+const bubbleLerp = {}; // letter → { cx, cy }
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!state.active || !cfg.showHalo) {
+    requestAnimationFrame(render);
+    return;
+  }
+
+  const { cx: acx, cy: acy } = wrapToCanvas(state.anchorCx, state.anchorCy);
+  const { cx: mcx, cy: mcy } = wrapToCanvas(state.mouseX,   state.mouseY);
+
+  const dist = Math.hypot(state.mouseX - state.anchorCx, state.mouseY - state.anchorCy);
+  const isCooldown = state.popState === 'cooldown';
+  const isArmed    = state.popState === 'armed';
+  const isFired    = state.popState === 'fired';
+
+  // ── Pop threshold ring ───────────────────────────────────
+  if (cfg.showPopRing) {
+    ctx.beginPath();
+    ctx.arc(acx, acy, cfg.popRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = isArmed
+      ? 'rgba(255,183,0,0.35)'
+      : isCooldown
+        ? 'rgba(0,255,170,0.3)'
+        : 'rgba(0,212,255,0.13)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 7]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ── Connector line ───────────────────────────────────────
+  ctx.beginPath();
+  ctx.moveTo(acx, acy);
+  ctx.lineTo(mcx, mcy);
+  const lineAlpha = isArmed ? 0.55 : 0.25;
+  ctx.strokeStyle = isArmed
+    ? `rgba(255,183,0,${lineAlpha})`
+    : `rgba(0,212,255,${lineAlpha})`;
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // ── Suggestion console ───────────────────────────────────
+  if (cfg.showSuggest && state.suggestion) {
+    const sp = getSuggestionCanvasPos();
+    if (sp) {
+      const pillW = 110;
+      const pillH = 30;
+      const px    = sp.cx - pillW / 2;
+      const py    = sp.cy - pillH / 2;
+      const r     = pillH / 2;
+
+      // Glow when armed toward suggestion
+      if (state.suggestArmed) {
+        ctx.shadowColor = 'rgba(192,132,252,0.7)';
+        ctx.shadowBlur  = 18;
+      }
+
+      // Pill background
+      ctx.beginPath();
+      ctx.moveTo(px + r, py);
+      ctx.arcTo(px + pillW, py, px + pillW, py + pillH, r);
+      ctx.arcTo(px + pillW, py + pillH, px, py + pillH, r);
+      ctx.arcTo(px, py + pillH, px, py, r);
+      ctx.arcTo(px, py, px + pillW, py, r);
+      ctx.closePath();
+      ctx.fillStyle = state.suggestArmed
+        ? 'rgba(60,20,90,0.92)'
+        : 'rgba(25,15,40,0.85)';
+      ctx.fill();
+
+      // Pill border
+      ctx.beginPath();
+      ctx.moveTo(px + r, py);
+      ctx.arcTo(px + pillW, py, px + pillW, py + pillH, r);
+      ctx.arcTo(px + pillW, py + pillH, px, py + pillH, r);
+      ctx.arcTo(px, py + pillH, px, py, r);
+      ctx.arcTo(px, py, px + pillW, py, r);
+      ctx.closePath();
+      ctx.strokeStyle = state.suggestArmed
+        ? 'rgba(192,132,252,0.9)'
+        : 'rgba(120,80,200,0.45)';
+      ctx.lineWidth = state.suggestArmed ? 1.5 : 1;
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = 'transparent';
+
+      // Label: "→ word"
+      ctx.font = `600 13px 'Trebuchet MS', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = state.suggestArmed ? '#e9d5ff' : 'rgba(192,132,252,0.8)';
+      ctx.fillText(`→ ${state.suggestion}`, sp.cx, sp.cy);
+
+      // Dashed line from suggestion to anchor
+      ctx.beginPath();
+      ctx.moveTo(sp.cx, sp.cy + pillH / 2);
+      ctx.lineTo(acx, acy);
+      ctx.strokeStyle = 'rgba(192,132,252,0.2)';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([3, 8]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // ── Candidate bubbles (sorted: weak first, active last) ──
+  const drawOrder = [...state.candidates].sort((a, b) => b.tier - a.tier);
+
+  drawOrder.forEach(c => {
+    // Lerp bubble rendered position for smooth transitions
+    if (!bubbleLerp[c.letter]) {
+      bubbleLerp[c.letter] = { cx: c.canvasCx, cy: c.canvasCy };
+    }
+    const bl = bubbleLerp[c.letter];
+    bl.cx += (c.canvasCx - bl.cx) * 0.18;
+    bl.cy += (c.canvasCy - bl.cy) * 0.18;
+
+    const bx = bl.cx;
+    const by = bl.cy;
+
+    // Tier-based sizing
+    const r = c.tier === 0
+      ? cfg.bubbleRadius * 1.45
+      : c.tier === 1
+        ? cfg.bubbleRadius * 1.05
+        : cfg.bubbleRadius * 0.72;
+
+    // Alpha by tier
+    const alpha = c.tier === 0 ? 1.0 : c.tier === 1 ? 0.72 : 0.42;
+
+    // ── Outer glow (active only) ───────────────────────────
+    if (c.tier === 0) {
+      const glowCol = isArmed ? 'rgba(255,183,0,' : 'rgba(0,212,255,';
+      const grd = ctx.createRadialGradient(bx, by, r * 0.3, bx, by, r * 2);
+      grd.addColorStop(0, glowCol + '0.22)');
+      grd.addColorStop(1, glowCol + '0)');
+      ctx.beginPath();
+      ctx.arc(bx, by, r * 2, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    }
+
+    // ── Bubble fill ────────────────────────────────────────
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+
+    if (c.tier === 0) {
+      const fillGrd = ctx.createRadialGradient(bx, by - r * 0.35, r * 0.05, bx, by, r);
+      if (isArmed) {
+        fillGrd.addColorStop(0, 'rgba(255,210,80,0.55)');
+        fillGrd.addColorStop(1, 'rgba(120,60,0,0.75)');
+      } else if (isCooldown) {
+        fillGrd.addColorStop(0, 'rgba(0,255,170,0.45)');
+        fillGrd.addColorStop(1, 'rgba(0,80,60,0.75)');
+      } else {
+        fillGrd.addColorStop(0, 'rgba(0,220,255,0.45)');
+        fillGrd.addColorStop(1, 'rgba(0,60,120,0.78)');
+      }
+      ctx.fillStyle = fillGrd;
+    } else {
+      ctx.fillStyle = `rgba(18,24,40,${alpha * 0.88})`;
+    }
+    ctx.fill();
+
+    // ── Bubble border ──────────────────────────────────────
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    if (c.tier === 0) {
+      ctx.strokeStyle = isArmed
+        ? `rgba(255,183,0,${alpha})`
+        : isCooldown
+          ? `rgba(0,255,170,${alpha})`
+          : `rgba(0,212,255,${alpha})`;
+      ctx.lineWidth = 2;
+    } else {
+      ctx.strokeStyle = `rgba(50,70,110,${alpha * 0.7})`;
+      ctx.lineWidth = 1;
+    }
+    ctx.stroke();
+
+    // ── Letter label ───────────────────────────────────────
+    const fontSize = c.tier === 0
+      ? Math.round(r * 0.7)
+      : c.tier === 1
+        ? Math.round(r * 0.65)
+        : Math.round(r * 0.6);
+
+    ctx.font = `${c.tier === 0 ? '700' : '500'} ${fontSize}px 'Trebuchet MS', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = c.tier === 0
+      ? '#ffffff'
+      : `rgba(160,185,220,${alpha})`;
+    ctx.fillText(c.letter, bx, by);
+
+    // ── Debug score label ──────────────────────────────────
+    if (cfg.showDebugLabels) {
+      ctx.font = `${Math.round(r * 0.3)}px 'Courier New', monospace`;
+      ctx.fillStyle = 'rgba(0,212,255,0.5)';
+      ctx.fillText(c.score.toFixed(2), bx, by + r * 0.6);
+    }
+  });
+
+  // ── Anchor dot ───────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(acx, acy, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = isArmed ? 'rgba(255,183,0,0.9)' : 'rgba(0,212,255,0.8)';
+  ctx.fill();
+
+  // ── Cursor dot ───────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(mcx, mcy, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = isCooldown
+    ? 'rgba(0,255,170,0.85)'
+    : isArmed
+      ? 'rgba(255,183,0,0.85)'
+      : 'rgba(0,212,255,0.6)';
+  ctx.fill();
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+
+/* ============================================================
+   SECTION 11 — DEBUG PANEL
+============================================================ */
+
+function updateDebug() {
+  const dist = Math.hypot(state.mouseX - state.anchorCx, state.mouseY - state.anchorCy);
+
+  document.getElementById('dbg-session').textContent = state.active ? 'ACTIVE' : 'IDLE';
+  document.getElementById('dbg-anchor').textContent  = state.anchorKey || '—';
+  document.getElementById('dbg-target').textContent  = state.activeTarget || '—';
+  document.getElementById('dbg-dist').textContent    = `${Math.round(dist)} px`;
+  document.getElementById('dbg-suggest').textContent = state.suggestion || '—';
+  document.getElementById('dbg-last').textContent    = state.lastCommit || '—';
+
+  const ps = document.getElementById('dbg-popstate');
+  ps.textContent = state.popState.toUpperCase();
+  ps.className   = `d-value ${
+    state.popState === 'armed'    ? 'd-armed'  :
+    state.popState === 'cooldown' ? 'd-commit' :
+    'd-muted'
+  }`;
+
+  const cd = document.getElementById('dbg-cooldown');
+  cd.textContent = state.popState === 'cooldown' ? 'WAIT' : '—';
+  cd.className   = `d-value ${state.popState === 'cooldown' ? 'd-armed' : 'd-muted'}`;
+}
+
+
+/* ============================================================
+   SECTION 12 — VELOCITY TRACKING
+   Maintain a rolling estimate of pointer speed (px per frame).
+============================================================ */
+
+function updateVelocity() {
+  const dx = state.mouseX - state.prevMouseX;
+  const dy = state.mouseY - state.prevMouseY;
+  const speed = Math.hypot(dx, dy);
+  // Exponential moving average
+  state.velocity = state.velocity * 0.7 + speed * 0.3;
+  state.prevMouseX = state.mouseX;
+  state.prevMouseY = state.mouseY;
+}
+
+
+/* ============================================================
+   SECTION 13 — EVENT HANDLING
+============================================================ */
+
+// Wrap-relative coordinates from a mouse or touch event
+function toWrapCoords(e) {
+  const rect = kbWrap.getBoundingClientRect();
+  const src  = e.touches ? e.touches[0] : e;
+  return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+}
+
+// Hit-test: which key center is within tap radius of (x, y)?
+function keyAtPoint(x, y) {
+  const HIT = 27; // px radius for a key hit
+  for (const [letter, data] of Object.entries(keyMap)) {
+    if (Math.hypot(x - data.cx, y - data.cy) < HIT) return letter;
+  }
+  return null;
+}
+
+// ── POINTER DOWN — start session ───────────────────────────
+function onPointerDown(e) {
+  e.preventDefault();
+  const { x, y } = toWrapCoords(e);
+  const hit = keyAtPoint(x, y);
+  if (!hit) return;
+
+  // Clear previous anchor highlight
+  if (state.anchorKey && keyMap[state.anchorKey]) {
+    keyMap[state.anchorKey].el.classList.remove('anchor-active');
+  }
+
+  state.active       = true;
+  state.anchorKey    = hit;
+  state.anchorCx     = keyMap[hit].cx;
+  state.anchorCy     = keyMap[hit].cy;
+  state.mouseX       = x;
+  state.mouseY       = y;
+  state.prevMouseX   = x;
+  state.prevMouseY   = y;
+  state.velocity     = 0;
+  state.candidates   = generateCandidates(hit);
+  state.activeTarget = null;
+  state.activeScore  = -Infinity;
+  state.popState     = 'idle';
+  state.suggestion   = computeSuggestion(state.outputText);
+  state.suggestArmed = false;
+
+  keyMap[hit].el.classList.add('anchor-active');
+}
+
+// ── POINTER MOVE — targeting + pop state ──────────────────
+function onPointerMove(e) {
+  e.preventDefault();
+  if (!state.active) return;
+
+  const { x, y } = toWrapCoords(e);
+  state.mouseX = x;
+  state.mouseY = y;
+
+  updateVelocity();
+  scoreCandidates();
+  updatePopStateMachine();
+  updateDebug();
+}
+
+// ── POINTER UP — end session ──────────────────────────────
+function onPointerUp(e) {
+  if (!state.active) return;
+  e.preventDefault();
+
+  if (state.anchorKey && keyMap[state.anchorKey]) {
+    keyMap[state.anchorKey].el.classList.remove('anchor-active');
+  }
+
+  state.active       = false;
+  state.anchorKey    = null;
+  state.candidates   = [];
+  state.activeTarget = null;
+  state.activeScore  = -Infinity;
+  state.popState     = 'idle';
+  state.suggestArmed = false;
+  clearTimeout(state.cooldownTimer);
+
+  updateDebug();
+}
+
+// Attach events
+kbWrap.addEventListener('mousedown',  onPointerDown, { passive: false });
+kbWrap.addEventListener('mousemove',  onPointerMove, { passive: false });
+kbWrap.addEventListener('mouseup',    onPointerUp,   { passive: false });
+kbWrap.addEventListener('mouseleave', onPointerUp,   { passive: false });
+
+kbWrap.addEventListener('touchstart',  onPointerDown, { passive: false });
+kbWrap.addEventListener('touchmove',   onPointerMove, { passive: false });
+kbWrap.addEventListener('touchend',    onPointerUp,   { passive: false });
+kbWrap.addEventListener('touchcancel', onPointerUp,   { passive: false });
+
+// Catch mouseup outside the wrap
+document.addEventListener('mouseup', onPointerUp);
+
+// Clear button
+document.getElementById('btn-clear').addEventListener('click', () => {
+  state.outputText  = '';
+  state.lastCommit  = null;
+  state.suggestion  = null;
+  document.getElementById('output-text').textContent = '';
+  updateDebug();
+});
+</script>
+</body>
+</html>
