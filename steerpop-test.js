@@ -1194,6 +1194,72 @@ function runTests() {
     engine.consumeEvents();
   }
 
+  // ── 39. Angle-based aiming — short push selects correct key ──
+  section('39. Angle-based aiming — short push selects correct key');
+  {
+    const engine = new SteerPopEngine({ gridStepSize: 30, deadzoneRadius: 8 });
+    engine.setGeometry(geo);
+
+    const W = keyCenter(geo, 'W');
+    const H = keyCenter(geo, 'H');
+    const E = keyCenter(geo, 'E');
+
+    // Tap W to commit and anchor there
+    engine.pointerDown({ x: W.x, y: W.y, timestamp: 8000 });
+    engine.pointerUp({ x: W.x, y: W.y, timestamp: 8050 });
+    engine.consumeEvents();
+
+    // Short push from W toward H (cross-row) — only ~40px, NOT all the way to H
+    const dirX = H.x - W.x;
+    const dirY = H.y - W.y;
+    const dirLen = Math.hypot(dirX, dirY);
+    const pushDist = 40; // short push, not the full distance
+    const pushX = W.x + (dirX / dirLen) * pushDist;
+    const pushY = W.y + (dirY / dirLen) * pushDist;
+
+    engine.pointerDown({ x: W.x, y: W.y, timestamp: 8200 });
+    engine.pointerMove({ x: pushX, y: pushY, timestamp: 8300 });
+
+    const state = engine.getState();
+    const topCand = state.topCandidate;
+    assert(topCand === 'H', `short push toward H selects H as top candidate (got ${topCand})`);
+
+    engine.pointerUp({ x: pushX, y: pushY, timestamp: 8350 });
+    engine.consumeEvents();
+  }
+
+  // ── 40. Same-row aiming — pointer position selects nearest key ──
+  section('40. Same-row aiming — pointer proximity');
+  {
+    const engine = new SteerPopEngine({ gridStepSize: 30, deadzoneRadius: 8 });
+    engine.setGeometry(geo);
+
+    const W = keyCenter(geo, 'W');
+    const E = keyCenter(geo, 'E');
+    const R = keyCenter(geo, 'R');
+
+    // Tap W
+    engine.pointerDown({ x: W.x, y: W.y, timestamp: 9000 });
+    engine.pointerUp({ x: W.x, y: W.y, timestamp: 9050 });
+    engine.consumeEvents();
+
+    // Short slide right — pointer near E's X position
+    engine.pointerDown({ x: W.x, y: W.y, timestamp: 9200 });
+    engine.pointerMove({ x: E.x, y: W.y, timestamp: 9300 });
+
+    const state1 = engine.getState();
+    assert(state1.topCandidate === 'E', `pointer near E selects E (got ${state1.topCandidate})`);
+
+    // Slide further — pointer near R's X position
+    engine.pointerMove({ x: R.x, y: W.y, timestamp: 9400 });
+
+    const state2 = engine.getState();
+    assert(state2.topCandidate === 'R', `pointer near R selects R (got ${state2.topCandidate})`);
+
+    engine.pointerUp({ x: R.x, y: W.y, timestamp: 9450 });
+    engine.consumeEvents();
+  }
+
   // ── Summary ───────────────────────────────────────────────
   console.log(`\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550`);
   console.log(`  PASSED: ${passed}  FAILED: ${failed}`);

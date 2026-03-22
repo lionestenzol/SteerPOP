@@ -364,21 +364,35 @@ export class SteerPopEngine {
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
 
-    // Row switching: Y distance determines how many rows to jump
+    // Row switching: ray projection determines target row
+    // Extend the anchor→pointer ray to see which row it aims at.
+    // A short diagonal push toward another row is enough to switch,
+    // even if the raw Y displacement is small.
     const rowSpacing = this._rowSpacing || 50;
-    const rowThreshold = rowSpacing * 0.6;
-    if (absDy > rowThreshold) {
-      const anchorKey = this._keyById.get(s.anchorKey);
-      if (anchorKey) {
-        // How many rows to jump: 1 row per rowSpacing of Y movement
-        const maxRow = this._rowCenters.length > 0
-          ? this._rowCenters[this._rowCenters.length - 1].row : 2;
-        const rowsToJump = Math.round(absDy / rowSpacing);
-        const targetRow = dy > 0
-          ? Math.min(anchorKey.row + rowsToJump, maxRow)
-          : Math.max(anchorKey.row - rowsToJump, 0);
-        s.activeRow = targetRow;
+    const anchorKey = this._keyById.get(s.anchorKey);
+    if (anchorKey && Math.abs(dy) > 1) {
+      const maxRow = this._rowCenters.length > 0
+        ? this._rowCenters[this._rowCenters.length - 1].row : 2;
+
+      // Find which row the ray from anchor through pointer would hit
+      // by checking each row center's Y position
+      let bestRow = anchorKey.row;
+      const anchorY = anchorKey.centerY;
+      for (const rc of this._rowCenters) {
+        if (rc.row === anchorKey.row) continue;
+        const rowY = rc.y;
+        // Does the ray point toward this row? (same sign of dy)
+        if ((rowY - anchorY) * dy <= 0) continue; // wrong direction
+        // Compute t: how far along the ray to reach this row
+        const t = (rowY - anchorY) / dy;
+        // The ray reaches this row — check it's a reasonable target
+        // (t > 0 means forward along the ray direction)
+        if (t > 0) {
+          bestRow = rc.row;
+          break; // take the first row in the ray's direction
+        }
       }
+      s.activeRow = bestRow;
     }
 
     // Determine swipe direction
@@ -616,26 +630,19 @@ export class SteerPopEngine {
       return { ...k, warpedX: w.x, warpedY: w.y };
     });
 
-    // Get keys in the swipe direction, ordered by warped position (nearest first)
+    // Get keys in the swipe direction
     const crossRow = s.activeRow !== anchorKey.row;
     let ordered;
     if (crossRow) {
-      // Cross-row: sort all target row keys by X-distance from pointer
-      // (left/right directional filter doesn't apply across rows due to stagger)
-      ordered = warpedKeys.slice().sort((a, b) =>
-        Math.abs(a.warpedX - px) - Math.abs(b.warpedX - px)
-      );
+      // Cross-row: no directional filter (stagger makes left/right unreliable)
+      ordered = warpedKeys.slice();
     } else if (dir === 'right') {
       ordered = warpedKeys.filter(k => k.centerX > anchorKey.centerX);
-      ordered.sort((a, b) => a.warpedX - b.warpedX);
     } else if (dir === 'left') {
       ordered = warpedKeys.filter(k => k.centerX < anchorKey.centerX);
-      ordered.sort((a, b) => b.warpedX - a.warpedX); // nearest first
     } else {
-      // Vertical — sort by warped X distance from pointer
-      ordered = warpedKeys.slice().sort((a, b) =>
-        Math.abs(a.warpedX - px) - Math.abs(b.warpedX - px)
-      );
+      // Vertical — all keys on target row
+      ordered = warpedKeys.slice();
     }
 
     if (ordered.length === 0) {
@@ -644,23 +651,27 @@ export class SteerPopEngine {
       return;
     }
 
-    // GRID COMPRESSION: slide distance → key index
-    // Each "step" of gridStepSize pixels = one key deeper
-    const gridStepSize = this.cfg.gridStepSize || 25; // pixels per key step
-    let keyIndex;
-    if (crossRow) {
-      // Cross-row: pointer-proximity already sorted, active = nearest to pointer
-      keyIndex = 0;
+    // ANGLE-BASED AIMING: project ray from anchor through pointer to pick target
+    // A short push in a direction selects the key you're pointing at — no need to
+    // drag your finger all the way to the target key.
+    const adx = px - anchorKey.centerX;
+    const ady = py - anchorKey.centerY;
+
+    if (crossRow && Math.abs(ady) > 1) {
+      // Ray projection: extend anchor→pointer ray to the target row
+      const targetRowY = ordered[0].centerY;
+      const t = (targetRowY - anchorKey.centerY) / ady;
+      const hitX = anchorKey.centerX + adx * t;
+      ordered.sort((a, b) =>
+        Math.abs(a.centerX - hitX) - Math.abs(b.centerX - hitX)
+      );
     } else {
-      const slideDist = (dir === 'left' || dir === 'right')
-        ? Math.abs(s.pointerPosition.x - s.anchorPosition.x)
-        : Math.abs(s.pointerPosition.y - s.anchorPosition.y);
-      // Which key index does this slide distance map to?
-      // Subtract deadzone from slide distance
-      const effectiveDist = Math.max(0, slideDist - this.cfg.deadzoneRadius);
-      keyIndex = Math.floor(effectiveDist / gridStepSize);
+      // Same-row: sort by proximity to pointer X position
+      ordered.sort((a, b) =>
+        Math.abs(a.warpedX - px) - Math.abs(b.warpedX - px)
+      );
     }
-    const activeIndex = Math.min(keyIndex, ordered.length - 1);
+    const activeIndex = 0; // always the nearest key to where you're pointing
 
     // Build candidates: active key is brightest, neighbors dimmer
     const scored = ordered.map((k, i) => {
@@ -739,21 +750,14 @@ export class SteerPopEngine {
     const crossRow = s.activeRow !== anchorKey.row;
     let directional;
     if (crossRow) {
-      // Cross-row: sort all target row keys by X-distance from pointer
-      // (left/right directional filter doesn't apply across rows due to stagger)
-      const px = s.pointerPosition.x;
-      directional = rowKeys.slice().sort((a, b) =>
-        Math.abs(a.centerX - px) - Math.abs(b.centerX - px)
-      );
+      // Cross-row: no directional filter (stagger makes left/right unreliable)
+      directional = rowKeys.slice();
     } else if (dir === 'right') {
       directional = rowKeys.filter(k => k.centerX > anchorKey.centerX);
     } else if (dir === 'left') {
-      directional = rowKeys.filter(k => k.centerX < anchorKey.centerX).reverse(); // closest first
+      directional = rowKeys.filter(k => k.centerX < anchorKey.centerX).reverse();
     } else if (dir === 'up' || dir === 'down') {
-      // Vertical: show the key on the target row closest to anchor's X position
-      directional = rowKeys.slice().sort((a, b) =>
-        Math.abs(a.centerX - anchorKey.centerX) - Math.abs(b.centerX - anchorKey.centerX)
-      );
+      directional = rowKeys.slice();
     } else {
       directional = [];
     }
@@ -773,24 +777,25 @@ export class SteerPopEngine {
       keySpacing = (allRowKeys[allRowKeys.length - 1].centerX - allRowKeys[0].centerX) / (allRowKeys.length - 1);
     }
 
-    // Score: which key matches the current slide distance
+    // ANGLE-BASED AIMING: score by proximity to where the user is pointing
+    const px = s.pointerPosition.x;
+    const py = s.pointerPosition.y;
+    const adx = px - anchorKey.centerX;
+    const ady = py - anchorKey.centerY;
+
     const scored = directional.map((k, idx) => {
-      let reachScore;
-      if (crossRow) {
-        // Cross-row: score by proximity to pointer position
-        const pointerDist = Math.abs(k.centerX - s.pointerPosition.x) / keySpacing;
-        reachScore = Math.exp(-pointerDist * pointerDist * 2.0);
+      let aimX;
+      if (crossRow && Math.abs(ady) > 1) {
+        // Ray projection: anchor→pointer ray extended to target row
+        const t = (k.centerY - anchorKey.centerY) / ady;
+        aimX = anchorKey.centerX + adx * t;
       } else {
-        // Same-row: score by slide distance matching key position
-        const slideDist = (dir === 'left' || dir === 'right')
-          ? Math.abs(s.pointerPosition.x - s.anchorPosition.x)
-          : Math.abs(s.pointerPosition.y - s.anchorPosition.y);
-        const keyDist = (dir === 'left' || dir === 'right')
-          ? Math.abs(k.centerX - anchorKey.centerX)
-          : Math.abs(k.centerY - anchorKey.centerY);
-        const reachDiff = Math.abs(slideDist - keyDist) / keySpacing;
-        reachScore = Math.exp(-reachDiff * reachDiff * 2.0);
+        // Same-row: pointer X position is the aim point
+        aimX = px;
       }
+
+      const pointerDist = Math.abs(k.centerX - aimX) / keySpacing;
+      const reachScore = Math.exp(-pointerDist * pointerDist * 2.0);
 
       return {
         id: k.id,
