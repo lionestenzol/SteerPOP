@@ -370,7 +370,12 @@ export class SteerPopEngine {
     // even if the raw Y displacement is small.
     const rowSpacing = this._rowSpacing || 50;
     const anchorKey = this._keyById.get(s.anchorKey);
-    if (anchorKey && Math.abs(dy) > 1) {
+    // Same-row bias: only consider row switching if the vertical component
+    // is at least 15% of horizontal (≈8.5° from horizontal). This prevents
+    // accidental row jumps from small vertical drift during horizontal slides,
+    // while still allowing shallow diagonals like E→L to cross rows.
+    const hasVerticalIntent = absDy > absDx * 0.15 && absDy > 3;
+    if (anchorKey && hasVerticalIntent) {
       const maxRow = this._rowCenters.length > 0
         ? this._rowCenters[this._rowCenters.length - 1].row : 2;
 
