@@ -29,6 +29,7 @@ const DEFAULT_CONFIG = Object.freeze({
   suggestionEnabled:    false,
   useScoring:           false,   // false = grid path (default), true = scoring path
   candidateAngleSpread: 100,     // cone width in degrees (visual + scoring path)
+  smoothingAlpha:       0.6,     // EMA weight for pointer smoothing (1 = no smoothing)
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -318,7 +319,6 @@ export class SteerPopEngine {
     if (!s.active) return;
 
     s.previousPointerPosition = { ...s.pointerPosition };
-    s.pointerPosition = { x: p.x, y: p.y };
 
     // Gesture capture: raw pointer displacement
     const gdx = p.x - s.previousPointerPosition.x;
@@ -327,7 +327,7 @@ export class SteerPopEngine {
       s.gestureVectors.push({ dx: gdx, dy: gdy, t: p.timestamp });
     }
 
-    // Track velocity buffer
+    // Track velocity buffer (raw coords — smoothing must not affect flick detection)
     this._velocityBuffer.push({ x: p.x, y: p.y, t: p.timestamp });
     // Keep last 6 samples
     if (this._velocityBuffer.length > 6) {
@@ -335,6 +335,13 @@ export class SteerPopEngine {
     }
 
     this._updateVelocity();
+
+    // EMA pointer smoothing for candidate generation (not velocity)
+    const alpha = this.cfg.smoothingAlpha;
+    s.pointerPosition = {
+      x: alpha * p.x + (1 - alpha) * s.previousPointerPosition.x,
+      y: alpha * p.y + (1 - alpha) * s.previousPointerPosition.y,
+    };
 
     const d = dist(s.anchorPosition.x, s.anchorPosition.y, p.x, p.y);
 
@@ -492,6 +499,8 @@ export class SteerPopEngine {
         pointerMarker: null,
         connectorLine: null,
         suggestionConsole: null,
+        confidence: 0,
+        confidenceZone: 'none',
         debugValues: this._debugValues(),
       };
     }
@@ -541,6 +550,8 @@ export class SteerPopEngine {
         to: { ...s.pointerPosition },
       },
       suggestionConsole,
+      confidence: s.confidence,
+      confidenceZone: s.confidenceZone,
       debugValues: this._debugValues(),
     };
   }
@@ -578,6 +589,10 @@ export class SteerPopEngine {
       gestureKeySequence:      [],       // committed key IDs in order
       commitVectors:           [],       // key-to-key displacement vectors [{dx, dy}]
       lastCommitPosition:      null,     // {x, y} of last committed key center
+      // Confidence system
+      confidence:              0,        // 0-1 certainty of current selection
+      confidenceZone:          'none',   // 'hot' | 'warm' | 'uncertain' | 'none'
+      topCandidateSince:       0,        // timestamp when current topCandidate was set
     };
   }
 
@@ -676,39 +691,42 @@ export class SteerPopEngine {
     const adx = px - anchorKey.centerX;
     const ady = py - anchorKey.centerY;
 
+    // Compute key spacing for Gaussian normalization
+    const allRowKeys = this._keysByRow.get(s.activeRow);
+    let keySpacing = 55;
+    if (allRowKeys && allRowKeys.length >= 2) {
+      const sorted = allRowKeys.slice().sort((a, b) => a.centerX - b.centerX);
+      keySpacing = (sorted[sorted.length - 1].centerX - sorted[0].centerX) / (sorted.length - 1);
+    }
+
+    // Compute aim point and score with continuous Gaussian (not discrete index)
+    let hitX;
     if (crossRow && Math.abs(ady) > 1) {
-      // Ray projection: extend anchor→pointer ray to the target row
       const targetRowY = ordered[0].centerY;
       const t = (targetRowY - anchorKey.centerY) / ady;
-      const hitX = anchorKey.centerX + adx * t;
-      ordered.sort((a, b) =>
-        Math.abs(a.centerX - hitX) - Math.abs(b.centerX - hitX)
-      );
+      hitX = anchorKey.centerX + adx * t;
     } else {
-      // Same-row: sort by proximity to pointer X position
-      ordered.sort((a, b) =>
-        Math.abs(a.warpedX - px) - Math.abs(b.warpedX - px)
-      );
+      hitX = null; // same-row: use warped pointer distance
     }
-    const activeIndex = 0; // always the nearest key to where you're pointing
 
-    // Build candidates: active key is brightest, neighbors dimmer
     const scored = ordered.map((k, i) => {
-      // Distance from the active index determines brightness
-      const indexDist = Math.abs(i - activeIndex);
-      const brightness = Math.max(0.12, 1.0 - indexDist * 0.25);
-      const score = indexDist === 0 ? 1.0 : 1.0 / (1 + indexDist);
+      const aimDist = hitX !== null
+        ? Math.abs(k.centerX - hitX)
+        : Math.abs(k.warpedX - px);
+      const normDist = aimDist / keySpacing;
+      const score = Math.exp(-normDist * normDist * 2.0);
+      const brightness = Math.max(0.12, score);
       return {
         id: k.id,
         label: k.label,
-        dist: Math.abs(k.centerX - anchorKey.centerX),
+        dist: aimDist,
         score,
         brightness,
         order: i,
       };
     });
 
-    // Sort by score (active key first)
+    // Sort by score (highest first)
     scored.sort((a, b) => b.score - a.score);
 
     // Take up to 8
@@ -728,6 +746,7 @@ export class SteerPopEngine {
             s.lockedTarget = prevTop;
           }
           s.topCandidate = newTop;
+          s.topCandidateSince = timestamp;
           this._emit('target_changed', { target: newTop, from: prevTop }, timestamp);
         }
       }
@@ -739,6 +758,7 @@ export class SteerPopEngine {
     }
 
     s.candidates = chosen;
+    this._computeConfidence(timestamp);
   }
 
   // ─────────────────────────────────────────────────────────
@@ -850,6 +870,7 @@ export class SteerPopEngine {
             s.lockedTarget = prevTop;
           }
           s.topCandidate = newTop;
+          s.topCandidateSince = timestamp;
           this._emit('target_changed', { target: newTop, from: prevTop }, timestamp);
         }
       }
@@ -861,6 +882,7 @@ export class SteerPopEngine {
     }
 
     s.candidates = chosen;
+    this._computeConfidence(timestamp);
   }
 
   // ─────────────────────────────────────────────────────────
@@ -890,6 +912,38 @@ export class SteerPopEngine {
   }
 
   // ─────────────────────────────────────────────────────────
+  // PRIVATE — confidence computation
+  // ─────────────────────────────────────────────────────────
+
+  _computeConfidence(timestamp) {
+    const s = this._state;
+    if (!s.topCandidate || s.candidates.length < 2) {
+      s.confidence = 0;
+      s.confidenceZone = 'none';
+      return;
+    }
+
+    // Factor 1: Score gap between top and runner-up (0-1)
+    const top = s.candidates[0];
+    const second = s.candidates[1];
+    const scoreGap = Math.min((top.score - second.score) / 0.3, 1.0);
+
+    // Factor 2: Dwell time — how long topCandidate has been stable (0-1 over 200ms)
+    const dwell = Math.min((timestamp - s.topCandidateSince) / 200, 1.0);
+
+    // Factor 3: Pointer stability — inverse of speed (0-1)
+    const stability = 1.0 / (1.0 + s.speed * 0.3);
+
+    // Weighted blend
+    s.confidence = scoreGap * 0.5 + dwell * 0.3 + stability * 0.2;
+
+    // Zone classification
+    if (s.confidence > 0.7) s.confidenceZone = 'hot';
+    else if (s.confidence > 0.3) s.confidenceZone = 'warm';
+    else s.confidenceZone = 'uncertain';
+  }
+
+  // ─────────────────────────────────────────────────────────
   // PRIVATE — flick-up detection
   // ─────────────────────────────────────────────────────────
 
@@ -897,6 +951,7 @@ export class SteerPopEngine {
     const s = this._state;
     if (s.flickState !== 'sliding') return;
     if (!s.topCandidate) return;
+    if (s.confidence < 0.2) return; // too uncertain to commit
 
     const buf = this._velocityBuffer;
     // Need at least 5 samples

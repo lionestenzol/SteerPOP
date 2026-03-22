@@ -114,6 +114,8 @@
   .d-label { font-size: 9px; color: #444; text-transform: uppercase; }
   .d-value { font-size: 12px; color: #888; }
   .d-accent { color: #4f8; }
+  .d-armed  { color: #fa0; }
+  .d-muted  { color: #888; }
   .d-commit { color: #ffb700; }
 
   /* Controls */
@@ -211,6 +213,10 @@
           <label>Warp Pull <span id="lbl-wp">0</span></label>
           <input type="range" id="ctrl-wp" min="0" max="0.8" step="0.05" value="0">
         </div>
+        <div class="ctrl-item">
+          <label>Smoothing <span id="lbl-sm">0.6</span></label>
+          <input type="range" id="ctrl-sm" min="0.1" max="1.0" step="0.05" value="0.6">
+        </div>
       </div>
       <div class="panel-section">
         <h3>State</h3>
@@ -223,6 +229,8 @@
           <div class="debug-cell"><div class="d-label">Direction</div><div class="d-value" id="dbg-dir">&mdash;</div></div>
           <div class="debug-cell"><div class="d-label">Speed</div><div class="d-value" id="dbg-speed">0</div></div>
           <div class="debug-cell"><div class="d-label">Candidates</div><div class="d-value" id="dbg-cands">0</div></div>
+          <div class="debug-cell"><div class="d-label">Confidence</div><div class="d-value d-accent" id="dbg-confidence">0</div></div>
+          <div class="debug-cell"><div class="d-label">Conf Zone</div><div class="d-value d-muted" id="dbg-confzone">none</div></div>
           <div class="debug-cell full"><div class="d-label">Last Commit</div><div class="d-value d-commit" id="dbg-last">&mdash;</div></div>
         </div>
       </div>
@@ -354,6 +362,7 @@ tabBtns.forEach(btn => btn.addEventListener('click', () => {
 document.getElementById('ctrl-dz').addEventListener('input', e => { engine.setConfig({ deadzoneRadius: +e.target.value }); document.getElementById('lbl-dz').textContent = e.target.value; });
 document.getElementById('ctrl-fs').addEventListener('input', e => { engine.setConfig({ flickSpeedThreshold: +e.target.value }); document.getElementById('lbl-fs').textContent = e.target.value; });
 document.getElementById('ctrl-wp').addEventListener('input', e => { engine.setConfig({ warpStrength: +e.target.value }); document.getElementById('lbl-wp').textContent = e.target.value; });
+document.getElementById('ctrl-sm').addEventListener('input', e => { engine.setConfig({ smoothingAlpha: +e.target.value }); document.getElementById('lbl-sm').textContent = e.target.value; });
 
 // ── Visualizer constants ──────────────────────────────
 const THRESHOLD_RATIO = 1.2;
@@ -622,6 +631,11 @@ function updateDebugPanel(s) {
   document.getElementById('dbg-dir').textContent = s.swipeDirection || '—';
   document.getElementById('dbg-speed').textContent = (s.speed || 0).toFixed(1);
   document.getElementById('dbg-cands').textContent = s.candidates?.length || 0;
+  document.getElementById('dbg-confidence').textContent = (s.confidence || 0).toFixed(2);
+  const zone = s.confidenceZone || 'none';
+  const confzoneEl = document.getElementById('dbg-confzone');
+  confzoneEl.textContent = zone;
+  confzoneEl.className = `d-value ${zone === 'hot' ? 'd-accent' : zone === 'warm' ? 'd-armed' : 'd-muted'}`;
   document.getElementById('dbg-last').textContent = s.lastCommittedKey || '—';
 }
 

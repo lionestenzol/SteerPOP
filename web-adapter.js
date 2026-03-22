@@ -55,6 +55,8 @@ const dbg = {
   suggest:    document.getElementById('dbg-suggest'),
   row:        document.getElementById('dbg-row'),
   swipedir:   document.getElementById('dbg-swipedir'),
+  confidence: document.getElementById('dbg-confidence'),
+  confzone:   document.getElementById('dbg-confzone'),
 };
 
 // Adapter-owned state
@@ -427,11 +429,16 @@ function updateKeyHighlights(model) {
 
   if (!ui.showHighlights) return;
 
-  // Candidate highlights
+  // Candidate highlights (confidence modulates top-candidate intensity)
+  const conf = model.confidence || 0;
   for (const h of model.keyHighlights) {
     if (!keyEls[h.id]) continue;
     if (h.isTop) {
       keyEls[h.id].classList.add('highlight-top');
+      // Dim top candidate when confidence is low
+      if (conf < 0.3) {
+        keyEls[h.id].style.opacity = 0.5;
+      }
     } else {
       keyEls[h.id].classList.add('highlight');
       keyEls[h.id].style.opacity = Math.max(0.3, h.brightness);
@@ -487,6 +494,17 @@ function updateDebug(model) {
   dbg.candcount.textContent = dv.candidates;
   if (dbg.row)      dbg.row.textContent      = dv.activeRow || '\u2014';
   if (dbg.swipedir) dbg.swipedir.textContent = dv.swipeDir || '\u2014';
+  if (dbg.confidence) {
+    dbg.confidence.textContent = model.confidence !== undefined
+      ? model.confidence.toFixed(2) : '0';
+  }
+  if (dbg.confzone) {
+    const zone = model.confidenceZone || 'none';
+    dbg.confzone.textContent = zone;
+    dbg.confzone.className = `d-value ${
+      zone === 'hot' ? 'd-accent' : zone === 'warm' ? 'd-armed' : 'd-muted'
+    }`;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

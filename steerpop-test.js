@@ -1250,8 +1250,11 @@ function runTests() {
     const state1 = engine.getState();
     assert(state1.topCandidate === 'E', `pointer near E selects E (got ${state1.topCandidate})`);
 
-    // Slide further — pointer near R's X position
+    // Slide further — pointer near R's X position (multiple moves for EMA convergence)
+    const midX = (E.x + R.x) / 2;
+    engine.pointerMove({ x: midX, y: W.y, timestamp: 9350 });
     engine.pointerMove({ x: R.x, y: W.y, timestamp: 9400 });
+    engine.pointerMove({ x: R.x, y: W.y, timestamp: 9420 });
 
     const state2 = engine.getState();
     assert(state2.topCandidate === 'R', `pointer near R selects R (got ${state2.topCandidate})`);
