@@ -1259,12 +1259,12 @@ export class SteerPopEngine {
         }
 
         // Check if B is among the candidates
+        // With pointer-proximity aiming, all keys in the candidate list are
+        // equally reachable by pointing — so any key in the list is "direct"
         const idx = candidates.findIndex(k => k.id === b.id);
         let status;
-        if (idx === 0) {
+        if (idx >= 0) {
           status = 'direct';
-        } else if (idx > 0) {
-          status = 'reachable';
         } else if (b.row !== targetRow) {
           status = 'unreachable';
         } else {
