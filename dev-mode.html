@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SteerPOP Dev Mode</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    background: #0a0a0a; color: #ddd;
+    touch-action: none; height: 100vh;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── Top bar ────────────────────────────── */
+  .top-bar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 16px; background: #111; border-bottom: 1px solid #222;
+    flex-shrink: 0; flex-wrap: wrap;
+  }
+  .top-bar h1 { font-size: 14px; color: #888; font-weight: 500; }
+  .committed { font-size: 16px; color: #4f8; letter-spacing: 2px; min-width: 80px; }
+  .live-readout {
+    display: flex; gap: 14px; font-size: 11px; color: #666; margin-left: auto;
+  }
+  .live-readout .val { color: #aaa; }
+  .live-readout .dir-label { font-weight: 700; }
+  .live-readout .dir-up { color: #f55; }
+  .live-readout .dir-down { color: #f80; }
+  .live-readout .dir-left { color: #5af; }
+  .live-readout .dir-right { color: #af5; }
+
+  /* ── Main layout ────────────────────────── */
+  .main-area { flex: 1; display: flex; overflow: hidden; }
+
+  /* ── Keyboard zone ──────────────────────── */
+  .kb-zone {
+    position: relative; flex: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .kb-wrap { position: relative; }
+
+  canvas#viz {
+    position: absolute; top: 0; left: 0; z-index: 10;
+    pointer-events: none;
+  }
+  svg#angle-overlay {
+    position: absolute; top: 0; left: 0; z-index: 9;
+    pointer-events: none;
+  }
+
+  .key {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid #333; border-radius: 6px;
+    font-size: 15px; font-weight: 600; color: #555;
+    background: #1a1a1a; z-index: 5;
+    transition: background 0.08s, color 0.08s, border-color 0.08s;
+    pointer-events: none;
+  }
+  .key.anchor { background: #0a3a2a; border-color: #2a8a5a; color: #4f8; }
+  .key.candidate { border-color: #445; color: #88a; }
+  .key.top-candidate { background: #1a3a1a; border-color: #4f8; color: #4f8; }
+  .key.wrong-dir { background: #2a1515; border-color: #633; color: #f55; }
+  .key.angle-anchor { background: #1a1a3a; border-color: #55f; color: #88f; box-shadow: 0 0 8px rgba(85,85,255,0.3); }
+
+  .touch-surface {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    z-index: 20; cursor: crosshair;
+  }
+
+  /* ── Side panel ─────────────────────────── */
+  .side-panel {
+    width: 260px; background: #111; border-left: 1px solid #222;
+    overflow-y: auto; flex-shrink: 0; font-size: 11px;
+  }
+
+  /* Toggle bar */
+  .toggle-bar {
+    display: flex; gap: 0; border-bottom: 1px solid #222;
+  }
+  .toggle-btn {
+    flex: 1; padding: 7px 4px; text-align: center;
+    background: none; border: none; color: #555; cursor: pointer;
+    font-size: 10px; font-family: inherit; text-transform: uppercase;
+    letter-spacing: 0.5px; border-bottom: 2px solid transparent;
+  }
+  .toggle-btn.active { color: #4f8; border-bottom-color: #4f8; }
+  .toggle-btn:hover { color: #aaa; }
+
+  /* Layer toggles */
+  .layer-toggles {
+    display: flex; gap: 6px; padding: 8px 10px;
+    border-bottom: 1px solid #222; flex-wrap: wrap;
+  }
+  .layer-toggle {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; color: #888; cursor: pointer;
+  }
+  .layer-toggle input { cursor: pointer; }
+  .layer-toggle.on { color: #ddd; }
+
+  .panel-section { padding: 8px 10px; border-bottom: 1px solid #1a1a1a; }
+  .panel-section h3 {
+    color: #555; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 4px;
+  }
+
+  /* Debug grid */
+  .debug-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+  .debug-cell { background: #0d0d0d; padding: 4px 6px; border-radius: 3px; }
+  .debug-cell.full { grid-column: 1 / -1; }
+  .d-label { font-size: 9px; color: #444; text-transform: uppercase; }
+  .d-value { font-size: 12px; color: #888; }
+  .d-accent { color: #4f8; }
+  .d-commit { color: #ffb700; }
+
+  /* Controls */
+  .ctrl-item { margin-bottom: 6px; }
+  .ctrl-item label { display: flex; justify-content: space-between; color: #666; font-size: 10px; margin-bottom: 2px; }
+  .ctrl-item input[type=range] { width: 100%; height: 4px; }
+
+  /* Candidates */
+  .cand-row { display: flex; gap: 4px; color: #666; align-items: center; }
+  .cand-row.top { color: #4f8; font-weight: 700; }
+  .cand-key { width: 16px; text-align: center; }
+  .cand-bar { height: 10px; background: #333; border-radius: 2px; transition: width 0.1s; }
+  .cand-row.top .cand-bar { background: #2a6a3a; }
+
+  /* Angle detail */
+  .angle-detail { color: #888; line-height: 1.5; font-size: 11px; }
+  .angle-detail .label { color: #555; }
+  .angle-detail .value { color: #bbb; }
+  .angle-detail .highlight { color: #4f8; }
+  .angle-detail .warn { color: #f80; }
+
+  /* Zone legend */
+  .zone-row { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+  .zone-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .zone-info { color: #666; font-size: 10px; }
+  .zone-active { color: #fff !important; font-weight: 700; }
+
+  /* Angle table */
+  .angle-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  .angle-table th { color: #555; text-align: left; padding: 2px 4px; border-bottom: 1px solid #222; }
+  .angle-table td { padding: 2px 4px; color: #888; }
+  .angle-table tr:hover td { background: #1a1a1a; }
+
+  /* Event log */
+  .event-log {
+    max-height: 120px; overflow-y: auto; font-size: 9px;
+    color: #444; padding: 4px; background: #0a0a0a; border-radius: 3px;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<nav style="display:flex;gap:12px;padding:6px 16px;background:#0e1118;border-bottom:1px solid #1a2030;font-family:sans-serif;font-size:12px;flex-wrap:wrap">
+  <a href="/" style="color:#8898b8;text-decoration:none">⌨ Keyboard</a>
+  <a href="/steer-visualizer.html" style="color:#8898b8;text-decoration:none">📐 Visualizer</a>
+  <a href="/angle-diagnostic.html" style="color:#8898b8;text-decoration:none">🔬 Angles</a>
+  <a href="/dev-mode.html" style="color:#00d4ff;text-decoration:none;font-weight:bold">🛠 Dev Mode</a>
+  <a href="/test.html" style="color:#8898b8;text-decoration:none">✅ Tests</a>
+</nav>
+
+<div class="top-bar">
+  <h1>Dev Mode</h1>
+  <div class="committed" id="committed"></div>
+  <div class="live-readout" id="readout"><span style="color:#555">Idle</span></div>
+</div>
+
+<div class="main-area">
+  <div class="kb-zone" id="kbZone">
+    <div class="kb-wrap" id="kbWrap">
+      <canvas id="viz"></canvas>
+      <svg id="angle-overlay"></svg>
+      <div class="touch-surface" id="touchSurface"></div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <!-- Layer toggles -->
+    <div class="layer-toggles">
+      <label class="layer-toggle on"><input type="checkbox" id="tog-viz" checked> Visualizer</label>
+      <label class="layer-toggle on"><input type="checkbox" id="tog-angles"> Angle Lines</label>
+      <label class="layer-toggle on"><input type="checkbox" id="tog-keys" checked> Key Highlights</label>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="toggle-bar">
+      <button class="toggle-btn active" data-tab="debug">Debug</button>
+      <button class="toggle-btn" data-tab="viz">Viz</button>
+      <button class="toggle-btn" data-tab="angles">Angles</button>
+    </div>
+
+    <!-- Tab: Debug -->
+    <div id="tab-debug">
+      <div class="panel-section">
+        <h3>Controls</h3>
+        <div class="ctrl-item">
+          <label>Deadzone <span id="lbl-dz">8</span>px</label>
+          <input type="range" id="ctrl-dz" min="0" max="30" value="8">
+        </div>
+        <div class="ctrl-item">
+          <label>Flick Speed <span id="lbl-fs">8</span></label>
+          <input type="range" id="ctrl-fs" min="4" max="20" value="8">
+        </div>
+        <div class="ctrl-item">
+          <label>Warp Pull <span id="lbl-wp">0</span></label>
+          <input type="range" id="ctrl-wp" min="0" max="0.8" step="0.05" value="0">
+        </div>
+      </div>
+      <div class="panel-section">
+        <h3>State</h3>
+        <div class="debug-grid">
+          <div class="debug-cell"><div class="d-label">Session</div><div class="d-value d-accent" id="dbg-session">IDLE</div></div>
+          <div class="debug-cell"><div class="d-label">Anchor</div><div class="d-value d-accent" id="dbg-anchor">&mdash;</div></div>
+          <div class="debug-cell"><div class="d-label">Target</div><div class="d-value d-accent" id="dbg-target">&mdash;</div></div>
+          <div class="debug-cell"><div class="d-label">Active Row</div><div class="d-value d-accent" id="dbg-row">&mdash;</div></div>
+          <div class="debug-cell"><div class="d-label">Flick State</div><div class="d-value" id="dbg-flick">idle</div></div>
+          <div class="debug-cell"><div class="d-label">Direction</div><div class="d-value" id="dbg-dir">&mdash;</div></div>
+          <div class="debug-cell"><div class="d-label">Speed</div><div class="d-value" id="dbg-speed">0</div></div>
+          <div class="debug-cell"><div class="d-label">Candidates</div><div class="d-value" id="dbg-cands">0</div></div>
+          <div class="debug-cell full"><div class="d-label">Last Commit</div><div class="d-value d-commit" id="dbg-last">&mdash;</div></div>
+        </div>
+      </div>
+      <div class="panel-section">
+        <h3>Event Log</h3>
+        <div class="event-log" id="eventLog"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Viz -->
+    <div id="tab-viz" style="display:none">
+      <div class="panel-section">
+        <h3>Direction Zones</h3>
+        <div id="zoneLegend">
+          <div class="zone-row" data-dir="up"><div class="zone-swatch" style="background:#f55"></div><span class="zone-info">Up</span></div>
+          <div class="zone-row" data-dir="down"><div class="zone-swatch" style="background:#f80"></div><span class="zone-info">Down</span></div>
+          <div class="zone-row" data-dir="left"><div class="zone-swatch" style="background:#5af"></div><span class="zone-info">Left</span></div>
+          <div class="zone-row" data-dir="right"><div class="zone-swatch" style="background:#af5"></div><span class="zone-info">Right</span></div>
+        </div>
+      </div>
+      <div class="panel-section">
+        <h3>Angle Math</h3>
+        <div class="angle-detail" id="angleMath"><span class="label">Touch a key</span></div>
+      </div>
+      <div class="panel-section">
+        <h3>Candidates</h3>
+        <div id="candidateList"><span style="color:#555">No candidates</span></div>
+      </div>
+      <div class="panel-section">
+        <h3>Transition</h3>
+        <div class="angle-detail" id="transitionInfo"><span class="label">Flick to commit</span></div>
+      </div>
+    </div>
+
+    <!-- Tab: Angles -->
+    <div id="tab-angles" style="display:none">
+      <div class="panel-section">
+        <h3>Angle Diagnostic</h3>
+        <p style="color:#666;font-size:10px;margin-bottom:6px">Click a key to set diagnostic anchor</p>
+        <div id="angleAnchorLabel" style="color:#88f;font-size:13px;font-weight:bold">None</div>
+        <div id="angleStats" style="color:#888;font-size:10px;margin-top:4px"></div>
+      </div>
+      <div class="panel-section" style="max-height:300px;overflow-y:auto">
+        <table class="angle-table">
+          <thead><tr><th>Key</th><th>Status</th><th>Angle</th><th>Dir</th></tr></thead>
+          <tbody id="angleTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { SteerPopEngine } from './steerpop-engine.js';
+
+// ── Geometry ──────────────────────────────────────────
+const KEY_W = 52, GAP = 4, PAD = 20;
+const ROWS_LABELS = ['QWERTYUIOP'.split(''), 'ASDFGHJKL'.split(''), 'ZXCVBNM'.split('')];
+const ROW_OFFSETS = [0, 0.5 * (KEY_W + GAP), 1.5 * (KEY_W + GAP)];
+
+const geometry = [];
+for (let r = 0; r < ROWS_LABELS.length; r++) {
+  for (let c = 0; c < ROWS_LABELS[r].length; c++) {
+    const x = PAD + ROW_OFFSETS[r] + c * (KEY_W + GAP) + KEY_W / 2;
+    const y = PAD + r * (KEY_W + GAP) + KEY_W / 2;
+    geometry.push({ id: ROWS_LABELS[r][c], label: ROWS_LABELS[r][c], row: r, col: c, centerX: x, centerY: y, width: KEY_W, height: KEY_W, excluded: false });
+  }
+}
+
+// ── Engine ────────────────────────────────────────────
+const engine = new SteerPopEngine({ gridStepSize: 30, deadzoneRadius: 8, flickSpeedThreshold: 8, flickCooldownMs: 350, warpStrength: 0 });
+engine.setGeometry(geometry);
+const transitionMap = SteerPopEngine.computeTransitionMap(geometry);
+
+// ── DOM ───────────────────────────────────────────────
+const kbWrap = document.getElementById('kbWrap');
+const canvas = document.getElementById('viz');
+const ctx = canvas.getContext('2d');
+const svgOverlay = document.getElementById('angle-overlay');
+const touchSurface = document.getElementById('touchSurface');
+const readoutEl = document.getElementById('readout');
+const committedEl = document.getElementById('committed');
+
+const maxX = Math.max(...geometry.map(k => k.centerX + k.width / 2)) + PAD;
+const maxY = Math.max(...geometry.map(k => k.centerY + k.height / 2)) + PAD;
+kbWrap.style.width = maxX + 'px';
+kbWrap.style.height = maxY + 'px';
+canvas.width = maxX; canvas.height = maxY;
+canvas.style.width = maxX + 'px'; canvas.style.height = maxY + 'px';
+svgOverlay.setAttribute('width', maxX);
+svgOverlay.setAttribute('height', maxY);
+svgOverlay.style.width = maxX + 'px';
+svgOverlay.style.height = maxY + 'px';
+
+const keyEls = new Map();
+for (const k of geometry) {
+  const el = document.createElement('div');
+  el.className = 'key';
+  el.textContent = k.label;
+  el.style.left = (k.centerX - k.width / 2) + 'px';
+  el.style.top = (k.centerY - k.height / 2) + 'px';
+  el.style.width = k.width + 'px';
+  el.style.height = k.height + 'px';
+  el.dataset.id = k.id;
+  kbWrap.appendChild(el);
+  keyEls.set(k.id, el);
+}
+
+// ── Toggles & Tabs ────────────────────────────────────
+const togViz = document.getElementById('tog-viz');
+const togAngles = document.getElementById('tog-angles');
+const togKeys = document.getElementById('tog-keys');
+let showViz = true, showAngles = false, showKeys = true;
+
+togViz.addEventListener('change', () => { showViz = togViz.checked; togViz.parentElement.classList.toggle('on', showViz); scheduleRender(); });
+togAngles.addEventListener('change', () => { showAngles = togAngles.checked; togAngles.parentElement.classList.toggle('on', showAngles); updateAngleLines(); });
+togKeys.addEventListener('change', () => { showKeys = togKeys.checked; togKeys.parentElement.classList.toggle('on', showKeys); scheduleRender(); });
+
+const tabBtns = document.querySelectorAll('.toggle-btn');
+const tabs = { debug: document.getElementById('tab-debug'), viz: document.getElementById('tab-viz'), angles: document.getElementById('tab-angles') };
+tabBtns.forEach(btn => btn.addEventListener('click', () => {
+  tabBtns.forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  Object.values(tabs).forEach(t => t.style.display = 'none');
+  tabs[btn.dataset.tab].style.display = '';
+}));
+
+// ── Controls ──────────────────────────────────────────
+document.getElementById('ctrl-dz').addEventListener('input', e => { engine.setConfig({ deadzoneRadius: +e.target.value }); document.getElementById('lbl-dz').textContent = e.target.value; });
+document.getElementById('ctrl-fs').addEventListener('input', e => { engine.setConfig({ flickSpeedThreshold: +e.target.value }); document.getElementById('lbl-fs').textContent = e.target.value; });
+document.getElementById('ctrl-wp').addEventListener('input', e => { engine.setConfig({ warpStrength: +e.target.value }); document.getElementById('lbl-wp').textContent = e.target.value; });
+
+// ── Visualizer constants ──────────────────────────────
+const THRESHOLD_RATIO = 1.2;
+const BOUNDARY_ANGLE = Math.atan(THRESHOLD_RATIO) * (180 / Math.PI);
+const ZONE_COLORS = {
+  right: { fill: 'rgba(170,255,85,0.08)', stroke: '#af5', light: '#af5' },
+  left:  { fill: 'rgba(85,170,255,0.08)', stroke: '#5af', light: '#5af' },
+  up:    { fill: 'rgba(255,85,85,0.08)',   stroke: '#f55', light: '#f55' },
+  down:  { fill: 'rgba(255,136,0,0.08)',   stroke: '#f80', light: '#f80' },
+};
+
+// ── State ─────────────────────────────────────────────
+let committedText = '', lastAnchorId = null, isDown = false;
+let angleAnchorId = null; // diagnostic anchor (separate from engine)
+const eventLogEl = document.getElementById('eventLog');
+let eventLogLines = [];
+
+// ── Pointer handling ──────────────────────────────────
+function getLocalPos(e) {
+  const rect = kbWrap.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+touchSurface.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  touchSurface.setPointerCapture(e.pointerId);
+  isDown = true;
+  const pos = getLocalPos(e);
+  engine.pointerDown({ x: pos.x, y: pos.y, timestamp: performance.now() });
+  processEvents(); scheduleRender();
+});
+touchSurface.addEventListener('pointermove', e => {
+  if (!isDown) return;
+  e.preventDefault();
+  const pos = getLocalPos(e);
+  engine.pointerMove({ x: pos.x, y: pos.y, timestamp: performance.now() });
+  processEvents(); scheduleRender();
+});
+touchSurface.addEventListener('pointerup', e => {
+  if (!isDown) return;
+  isDown = false;
+  const pos = getLocalPos(e);
+  engine.pointerUp({ x: pos.x, y: pos.y, timestamp: performance.now() });
+  processEvents(); scheduleRender();
+});
+touchSurface.addEventListener('pointercancel', () => {
+  if (!isDown) return;
+  isDown = false;
+  engine.pointerUp({ x: 0, y: 0, timestamp: performance.now() });
+  processEvents(); scheduleRender();
+});
+
+// Angle diagnostic: click key to set anchor
+touchSurface.addEventListener('click', e => {
+  const pos = getLocalPos(e);
+  const hit = geometry.find(k => Math.abs(k.centerX - pos.x) < k.width / 2 && Math.abs(k.centerY - pos.y) < k.height / 2);
+  if (hit) {
+    angleAnchorId = hit.id;
+    updateAngleLines();
+    updateAnglePanel();
+  }
+});
+
+// ── Event processing ──────────────────────────────────
+function processEvents() {
+  const events = engine.consumeEvents();
+  for (const ev of events) {
+    if (ev.type === 'letter_committed' || ev.type === 'flick_confirmed') {
+      committedText += ev.key;
+      lastAnchorId = ev.key;
+    }
+    eventLogLines.unshift(`${ev.type}: ${ev.key || ''}`);
+    if (eventLogLines.length > 50) eventLogLines.length = 50;
+  }
+  committedEl.textContent = committedText;
+  eventLogEl.innerHTML = eventLogLines.map(l => `<div>${l}</div>`).join('');
+}
+
+// ── Render ────────────────────────────────────────────
+let renderPending = false;
+function scheduleRender() { if (renderPending) return; renderPending = true; requestAnimationFrame(render); }
+function render() { renderPending = false; try { _renderInner(); } catch(e) { console.error('render:', e); } }
+
+function _renderInner() {
+  const model = engine.getRenderModel();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Reset key classes (keep angle-anchor)
+  for (const [id, el] of keyEls) {
+    el.className = 'key' + (id === angleAnchorId && showAngles ? ' angle-anchor' : '');
+  }
+
+  if (!model.sessionActive) {
+    if (lastAnchorId && showKeys) {
+      const el = keyEls.get(lastAnchorId);
+      if (el) el.classList.add('anchor');
+    }
+    updateReadout(null);
+    updateDebugPanel(null);
+    return;
+  }
+
+  const ax = model.anchorMarker.x, ay = model.anchorMarker.y;
+  const px = model.pointerMarker.x, py = model.pointerMarker.y;
+  const dx = px - ax, dy = py - ay;
+  const dist = Math.hypot(dx, dy);
+  const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  const direction = SteerPopEngine.classifyDirection(dx, dy, THRESHOLD_RATIO);
+  const ratio = absDx > 0.001 ? absDy / absDx : Infinity;
+  const isVertical = absDy > absDx * THRESHOLD_RATIO;
+  const dirColor = ZONE_COLORS[direction]?.light || '#888';
+
+  if (showViz) {
+    // Zone wedges
+    const zoneRadius = Math.max(160, dist + 40);
+    drawZoneWedges(ax, ay, zoneRadius, direction);
+
+    // Angle line
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(px, py);
+    ctx.strokeStyle = dirColor; ctx.lineWidth = 3; ctx.globalAlpha = 0.8; ctx.stroke(); ctx.globalAlpha = 1;
+
+    // Anchor dot
+    ctx.beginPath(); ctx.arc(ax, ay, 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#0d4a2a'; ctx.fill();
+    ctx.strokeStyle = '#4f8'; ctx.lineWidth = 2; ctx.stroke();
+
+    // Pointer dot
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = dirColor; ctx.globalAlpha = 0.7; ctx.fill(); ctx.globalAlpha = 1;
+
+    // Deadzone
+    ctx.beginPath(); ctx.arc(ax, ay, engine.cfg.deadzoneRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Angle arc
+    if (dist > engine.cfg.deadzoneRadius + 5) {
+      const angleRad = Math.atan2(dy, dx);
+      const arcR = Math.min(40, dist * 0.4);
+      ctx.beginPath(); ctx.arc(ax, ay, arcR, 0, angleRad, angleRad < 0);
+      ctx.strokeStyle = dirColor; ctx.lineWidth = 2; ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+      const tA = angleRad * 0.5, tR = arcR + 14;
+      ctx.font = '11px monospace'; ctx.fillStyle = dirColor; ctx.globalAlpha = 0.8;
+      ctx.fillText(angleDeg.toFixed(1) + '°', ax + Math.cos(tA) * tR - 12, ay + Math.sin(tA) * tR + 4);
+      ctx.globalAlpha = 1;
+    }
+
+    // Candidate lines
+    for (const c of model.candidates) {
+      const key = geometry.find(k => k.id === c.id);
+      if (!key) continue;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(key.centerX, key.centerY);
+      ctx.strokeStyle = c.isTop ? 'rgba(68,255,136,0.35)' : 'rgba(136,170,204,0.15)';
+      ctx.lineWidth = c.isTop ? 2 : 1; ctx.stroke();
+    }
+  }
+
+  // Key highlights
+  if (showKeys) {
+    const state = engine.getState();
+    if (state.anchorKey) { const el = keyEls.get(state.anchorKey); if (el) el.classList.add('anchor'); }
+    for (const c of model.candidates) {
+      const el = keyEls.get(c.id);
+      if (el) el.classList.add(c.isTop ? 'top-candidate' : 'candidate');
+    }
+  }
+
+  const data = { angleDeg, direction, dist, ratio, isVertical, dx, dy, absDx, absDy };
+  updateReadout(data);
+  updateAngleMath(data);
+  updateCandidateList(model.candidates);
+  updateTransitionInfo(engine.getState().anchorKey, model.candidates);
+  updateZoneLegend(direction);
+  updateDebugPanel(engine.getState());
+}
+
+// ── Zone wedge drawing ────────────────────────────────
+function drawZoneWedges(cx, cy, r, activeDir) {
+  const b = BOUNDARY_ANGLE * Math.PI / 180;
+  drawWedge(cx, cy, r, -b, b, 'right', activeDir);
+  drawWedge(cx, cy, r, Math.PI - b, Math.PI + b, 'left', activeDir);
+  drawWedge(cx, cy, r, b, Math.PI - b, 'down', activeDir);
+  drawWedge(cx, cy, r, -Math.PI + b, -b, 'up', activeDir);
+  ctx.setLineDash([2, 4]); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  for (const a of [b, -b, Math.PI - b, Math.PI + b]) {
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+function drawWedge(cx, cy, r, s, e, dir, activeDir) {
+  const c = ZONE_COLORS[dir], on = dir === activeDir;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, s, e); ctx.closePath();
+  ctx.fillStyle = on ? c.fill.replace('0.08', '0.18') : c.fill; ctx.fill();
+  const mid = (s + e) / 2, lr = r * 0.7;
+  ctx.font = on ? 'bold 13px monospace' : '11px monospace';
+  ctx.fillStyle = on ? c.light : 'rgba(255,255,255,0.15)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(dir.toUpperCase(), cx + Math.cos(mid) * lr, cy + Math.sin(mid) * lr);
+  ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+}
+
+// ── Side panel updates ────────────────────────────────
+function updateReadout(d) {
+  if (!d) { readoutEl.innerHTML = '<span style="color:#555">Idle</span>'; return; }
+  readoutEl.innerHTML =
+    `<span>∠ <span class="val">${d.angleDeg.toFixed(1)}°</span></span>` +
+    `<span>d: <span class="val">${d.dist.toFixed(0)}</span></span>` +
+    `<span>dy/dx: <span class="val">${d.ratio.toFixed(2)}</span></span>` +
+    `<span class="val dir-label dir-${d.direction}">${d.direction}</span>`;
+}
+
+function updateAngleMath(d) {
+  const el = document.getElementById('angleMath');
+  const s = engine.getState();
+  if (!s.anchorKey) { el.innerHTML = '<span class="label">Touch a key</span>'; return; }
+  const thr = d.isVertical;
+  el.innerHTML =
+    `<div><span class="label">anchor:</span> <span class="highlight">${s.anchorKey}</span></div>` +
+    `<div><span class="label">dx:</span> <span class="value">${d.dx.toFixed(1)}</span> <span class="label">dy:</span> <span class="value">${d.dy.toFixed(1)}</span></div>` +
+    `<div><span class="label">|dy|:</span> <span class="value">${d.absDy.toFixed(1)}</span> <span class="label">|dx|×1.2:</span> <span class="value">${(d.absDx * THRESHOLD_RATIO).toFixed(1)}</span></div>` +
+    `<div><span class="${thr ? 'warn' : 'highlight'}">${d.absDy.toFixed(1)} ${thr ? '>' : '≤'} ${(d.absDx * THRESHOLD_RATIO).toFixed(1)} → ${thr ? 'VERT' : 'HORIZ'}</span></div>` +
+    `<div><span class="label">angle:</span> <span class="value">${d.angleDeg.toFixed(1)}°</span></div>`;
+}
+
+function updateCandidateList(cands) {
+  const el = document.getElementById('candidateList');
+  if (!cands?.length) { el.innerHTML = '<span style="color:#555">No candidates</span>'; return; }
+  const mx = Math.max(...cands.map(c => c.brightness || 0), 0.01);
+  el.innerHTML = cands.map(c => {
+    const w = Math.round((c.brightness / mx) * 100);
+    return `<div class="cand-row ${c.isTop ? 'top' : ''}"><span class="cand-key">${c.id}</span><div class="cand-bar" style="width:${w}px"></div><span style="font-size:9px;color:#555">${(c.brightness * 100).toFixed(0)}%</span></div>`;
+  }).join('');
+}
+
+function updateTransitionInfo(anchorKey, cands) {
+  const el = document.getElementById('transitionInfo');
+  if (!anchorKey) { el.innerHTML = '<span class="label">Flick to commit</span>'; return; }
+  const m = transitionMap.get(anchorKey);
+  if (!m) return;
+  let d = 0, r = 0;
+  for (const [, i] of m) { if (i.status === 'direct') d++; else r++; }
+  let h = `<div><span class="highlight">${anchorKey}</span> → ${d} direct, ${r} other</div>`;
+  const top = cands?.find(c => c.isTop);
+  if (top) { const i = m.get(top.id); if (i) h += `<div>→${top.id}: ${i.angle.toFixed(1)}°</div>`; }
+  el.innerHTML = h;
+}
+
+function updateZoneLegend(dir) {
+  const el = document.getElementById('zoneLegend');
+  for (const row of el.children) {
+    const info = row.querySelector('.zone-info');
+    info.classList.toggle('zone-active', row.dataset.dir === dir);
+  }
+}
+
+function updateDebugPanel(s) {
+  if (!s) {
+    document.getElementById('dbg-session').textContent = 'IDLE';
+    return;
+  }
+  document.getElementById('dbg-session').textContent = s.active ? 'ACTIVE' : 'IDLE';
+  document.getElementById('dbg-anchor').textContent = s.anchorKey || '—';
+  document.getElementById('dbg-target').textContent = s.topCandidate || '—';
+  document.getElementById('dbg-row').textContent = s.activeRow ?? '—';
+  document.getElementById('dbg-flick').textContent = s.flickState || 'idle';
+  document.getElementById('dbg-dir').textContent = s.swipeDirection || '—';
+  document.getElementById('dbg-speed').textContent = (s.speed || 0).toFixed(1);
+  document.getElementById('dbg-cands').textContent = s.candidates?.length || 0;
+  document.getElementById('dbg-last').textContent = s.lastCommittedKey || '—';
+}
+
+// ── Angle diagnostic overlay ──────────────────────────
+function updateAngleLines() {
+  svgOverlay.innerHTML = '';
+  if (!showAngles || !angleAnchorId) return;
+
+  const inner = transitionMap.get(angleAnchorId);
+  if (!inner) return;
+  const a = geometry.find(k => k.id === angleAnchorId);
+
+  for (const [tgtId, info] of inner) {
+    const b = geometry.find(k => k.id === tgtId);
+    const color = info.status === 'direct' ? '#4f8' : info.status === 'reachable' ? '#ed3' : '#f55';
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', a.centerX); line.setAttribute('y1', a.centerY);
+    line.setAttribute('x2', b.centerX); line.setAttribute('y2', b.centerY);
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', info.status === 'direct' ? '2' : '1');
+    line.setAttribute('stroke-opacity', '0.5');
+    svgOverlay.appendChild(line);
+  }
+}
+
+function updateAnglePanel() {
+  document.getElementById('angleAnchorLabel').textContent = angleAnchorId || 'None';
+  const tbody = document.getElementById('angleTableBody');
+  const statsEl = document.getElementById('angleStats');
+
+  if (!angleAnchorId) { tbody.innerHTML = ''; statsEl.textContent = ''; return; }
+
+  const inner = transitionMap.get(angleAnchorId);
+  if (!inner) return;
+
+  let d = 0, r = 0, w = 0, u = 0;
+  const rows = [];
+  for (const [tgtId, info] of inner) {
+    if (info.status === 'direct') d++;
+    else if (info.status === 'reachable') r++;
+    else if (info.status === 'wrong_direction') w++;
+    else u++;
+    rows.push({ tgt: tgtId, ...info });
+  }
+  statsEl.textContent = `${d} direct · ${r} reachable · ${w} wrong · ${u} unreachable`;
+
+  rows.sort((a, b) => { const o = { wrong_direction: 0, unreachable: 0, reachable: 1, direct: 2 }; return (o[a.status] || 0) - (o[b.status] || 0); });
+  tbody.innerHTML = rows.map(r => {
+    const c = r.status === 'direct' ? '#4f8' : r.status === 'reachable' ? '#ed3' : '#f55';
+    return `<tr><td>${r.tgt}</td><td style="color:${c}">${r.status}</td><td>${r.angle.toFixed(0)}°</td><td>${r.direction}</td></tr>`;
+  }).join('');
+}
+
+scheduleRender();
+</script>
+</body>
+</html>
