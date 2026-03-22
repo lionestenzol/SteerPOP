@@ -617,8 +617,15 @@ export class SteerPopEngine {
     });
 
     // Get keys in the swipe direction, ordered by warped position (nearest first)
+    const crossRow = s.activeRow !== anchorKey.row;
     let ordered;
-    if (dir === 'right') {
+    if (crossRow) {
+      // Cross-row: sort all target row keys by X-distance from pointer
+      // (left/right directional filter doesn't apply across rows due to stagger)
+      ordered = warpedKeys.slice().sort((a, b) =>
+        Math.abs(a.warpedX - px) - Math.abs(b.warpedX - px)
+      );
+    } else if (dir === 'right') {
       ordered = warpedKeys.filter(k => k.centerX > anchorKey.centerX);
       ordered.sort((a, b) => a.warpedX - b.warpedX);
     } else if (dir === 'left') {
@@ -640,14 +647,19 @@ export class SteerPopEngine {
     // GRID COMPRESSION: slide distance → key index
     // Each "step" of gridStepSize pixels = one key deeper
     const gridStepSize = this.cfg.gridStepSize || 25; // pixels per key step
-    const slideDist = (dir === 'left' || dir === 'right')
-      ? Math.abs(s.pointerPosition.x - s.anchorPosition.x)
-      : Math.abs(s.pointerPosition.y - s.anchorPosition.y);
-
-    // Which key index does this slide distance map to?
-    // Subtract deadzone from slide distance
-    const effectiveDist = Math.max(0, slideDist - this.cfg.deadzoneRadius);
-    const keyIndex = Math.floor(effectiveDist / gridStepSize);
+    let keyIndex;
+    if (crossRow) {
+      // Cross-row: pointer-proximity already sorted, active = nearest to pointer
+      keyIndex = 0;
+    } else {
+      const slideDist = (dir === 'left' || dir === 'right')
+        ? Math.abs(s.pointerPosition.x - s.anchorPosition.x)
+        : Math.abs(s.pointerPosition.y - s.anchorPosition.y);
+      // Which key index does this slide distance map to?
+      // Subtract deadzone from slide distance
+      const effectiveDist = Math.max(0, slideDist - this.cfg.deadzoneRadius);
+      keyIndex = Math.floor(effectiveDist / gridStepSize);
+    }
     const activeIndex = Math.min(keyIndex, ordered.length - 1);
 
     // Build candidates: active key is brightest, neighbors dimmer
@@ -724,8 +736,16 @@ export class SteerPopEngine {
     }
 
     // Filter by direction: only keys in the swipe direction
+    const crossRow = s.activeRow !== anchorKey.row;
     let directional;
-    if (dir === 'right') {
+    if (crossRow) {
+      // Cross-row: sort all target row keys by X-distance from pointer
+      // (left/right directional filter doesn't apply across rows due to stagger)
+      const px = s.pointerPosition.x;
+      directional = rowKeys.slice().sort((a, b) =>
+        Math.abs(a.centerX - px) - Math.abs(b.centerX - px)
+      );
+    } else if (dir === 'right') {
       directional = rowKeys.filter(k => k.centerX > anchorKey.centerX);
     } else if (dir === 'left') {
       directional = rowKeys.filter(k => k.centerX < anchorKey.centerX).reverse(); // closest first
@@ -744,11 +764,6 @@ export class SteerPopEngine {
       return;
     }
 
-    // How far the pointer has slid from the anchor (horizontal component for left/right)
-    const slideDist = (dir === 'left' || dir === 'right')
-      ? Math.abs(s.pointerPosition.x - s.anchorPosition.x)
-      : Math.abs(s.pointerPosition.y - s.anchorPosition.y);
-
     // Compute horizontal spacing between adjacent keys on this row
     const allRowKeys = this.geometry
       .filter(k => !k.excluded && k.row === s.activeRow)
@@ -760,19 +775,27 @@ export class SteerPopEngine {
 
     // Score: which key matches the current slide distance
     const scored = directional.map((k, idx) => {
-      // Distance of this key from anchor (in the direction of swipe)
-      const keyDist = (dir === 'left' || dir === 'right')
-        ? Math.abs(k.centerX - anchorKey.centerX)
-        : Math.abs(k.centerY - anchorKey.centerY);
-
-      // How well the slide distance matches this key's position
-      const reachDiff = Math.abs(slideDist - keyDist) / keySpacing;
-      const reachScore = Math.exp(-reachDiff * reachDiff * 2.0);
+      let reachScore;
+      if (crossRow) {
+        // Cross-row: score by proximity to pointer position
+        const pointerDist = Math.abs(k.centerX - s.pointerPosition.x) / keySpacing;
+        reachScore = Math.exp(-pointerDist * pointerDist * 2.0);
+      } else {
+        // Same-row: score by slide distance matching key position
+        const slideDist = (dir === 'left' || dir === 'right')
+          ? Math.abs(s.pointerPosition.x - s.anchorPosition.x)
+          : Math.abs(s.pointerPosition.y - s.anchorPosition.y);
+        const keyDist = (dir === 'left' || dir === 'right')
+          ? Math.abs(k.centerX - anchorKey.centerX)
+          : Math.abs(k.centerY - anchorKey.centerY);
+        const reachDiff = Math.abs(slideDist - keyDist) / keySpacing;
+        reachScore = Math.exp(-reachDiff * reachDiff * 2.0);
+      }
 
       return {
         id: k.id,
         label: k.label,
-        dist: keyDist,
+        dist: Math.abs(k.centerX - anchorKey.centerX),
         score: reachScore,
         brightness: 0,
         order: idx,
@@ -1204,8 +1227,15 @@ export class SteerPopEngine {
 
         // Get candidates for this direction on the target row
         const rowKeys = keysByRow.get(targetRow) || [];
+        const crossRow = targetRow !== a.row;
         let candidates;
-        if (direction === 'right') {
+        if (crossRow) {
+          // Cross-row: sort all target row keys by X-distance from B
+          // (mirrors the live engine's pointer-proximity logic)
+          candidates = rowKeys.slice().sort((x, y) =>
+            Math.abs(x.centerX - b.centerX) - Math.abs(y.centerX - b.centerX)
+          );
+        } else if (direction === 'right') {
           candidates = rowKeys.filter(k => k.centerX > a.centerX);
           candidates.sort((x, y) => x.centerX - y.centerX);
         } else if (direction === 'left') {

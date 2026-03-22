@@ -1104,6 +1104,96 @@ function runTests() {
     assert(totalPairs > 0, 'transition map is non-empty');
   }
 
+  // ── 37. Cross-row return — no "home base row bias" ───────
+  section('37. Cross-row return (row 1 → row 0 → row 1)');
+  {
+    const engine = new SteerPopEngine({ gridStepSize: 25, deadzoneRadius: 8 });
+    engine.setGeometry(geo);
+
+    const H = keyCenter(geo, 'H');  // row 1
+    const E = keyCenter(geo, 'E');  // row 0
+    const L = keyCenter(geo, 'L');  // row 1
+
+    // Step 1: Tap H to commit it as anchor
+    engine.pointerDown({ x: H.x, y: H.y, timestamp: 5000 });
+    engine.pointerUp({ x: H.x, y: H.y, timestamp: 5050 });
+    let evts = engine.consumeEvents();
+    const hCommit = evts.find(e => e.key === 'H');
+    assert(!!hCommit, 'H committed via tap');
+
+    // Step 2: Touch H again and slide up toward E (row 0)
+    engine.pointerDown({ x: H.x, y: H.y, timestamp: 5500 });
+    // Slide upward toward E's position
+    engine.pointerMove({ x: E.x, y: E.y, timestamp: 5600 });
+
+    // Check that E is a candidate on row 0
+    const state1 = engine.getState();
+    assert(state1.activeRow === 0, `activeRow switched to 0 (got ${state1.activeRow})`);
+    const cands1 = state1.candidates || [];
+    const eInCands = cands1.some(c => c.id === 'E');
+    assert(eInCands, 'E is in candidates after sliding up from H');
+
+    // Simulate flick commit of E
+    engine.pointerUp({ x: E.x, y: E.y - 10, timestamp: 5620 });
+    evts = engine.consumeEvents();
+    // If flick didn't fire, do a tap on E instead
+    if (!evts.find(e => e.key === 'E')) {
+      engine.pointerDown({ x: E.x, y: E.y, timestamp: 5800 });
+      engine.pointerUp({ x: E.x, y: E.y, timestamp: 5850 });
+      evts = engine.consumeEvents();
+    }
+    const eCommit = evts.find(e => e.key === 'E');
+    assert(!!eCommit, 'E committed');
+
+    // Step 3: Now from E (row 0), slide down-right toward L (row 1)
+    // This is the critical test — can we return to row 1?
+    engine.pointerDown({ x: E.x, y: E.y, timestamp: 6200 });
+    engine.pointerMove({ x: L.x, y: L.y, timestamp: 6300 });
+
+    const state2 = engine.getState();
+    assert(state2.activeRow === 1, `activeRow returned to 1 (got ${state2.activeRow})`);
+    const cands2 = state2.candidates || [];
+    const lInCands = cands2.some(c => c.id === 'L');
+    assert(lInCands, 'L is in candidates after sliding down from E (cross-row return works)');
+
+    engine.pointerUp({ x: L.x, y: L.y, timestamp: 6350 });
+    engine.consumeEvents();
+  }
+
+  // ── 38. Cross-row return (row 0 → row 1 → row 0) ─────────
+  section('38. Cross-row return (row 0 → row 1 → row 0)');
+  {
+    const engine = new SteerPopEngine({ gridStepSize: 25, deadzoneRadius: 8 });
+    engine.setGeometry(geo);
+
+    const T = keyCenter(geo, 'T');  // row 0
+    const G = keyCenter(geo, 'G');  // row 1
+    const R = keyCenter(geo, 'R');  // row 0
+
+    // Tap T
+    engine.pointerDown({ x: T.x, y: T.y, timestamp: 7000 });
+    engine.pointerUp({ x: T.x, y: T.y, timestamp: 7050 });
+    engine.consumeEvents();
+
+    // Tap G (row 1)
+    engine.pointerDown({ x: G.x, y: G.y, timestamp: 7200 });
+    engine.pointerUp({ x: G.x, y: G.y, timestamp: 7250 });
+    engine.consumeEvents();
+
+    // From G (row 1), slide up-left toward R (row 0)
+    engine.pointerDown({ x: G.x, y: G.y, timestamp: 7500 });
+    engine.pointerMove({ x: R.x, y: R.y, timestamp: 7600 });
+
+    const state = engine.getState();
+    assert(state.activeRow === 0, `activeRow returned to 0 (got ${state.activeRow})`);
+    const cands = state.candidates || [];
+    const rInCands = cands.some(c => c.id === 'R');
+    assert(rInCands, 'R is in candidates after sliding up from G (cross-row return works)');
+
+    engine.pointerUp({ x: R.x, y: R.y, timestamp: 7650 });
+    engine.consumeEvents();
+  }
+
   // ── Summary ───────────────────────────────────────────────
   console.log(`\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550`);
   console.log(`  PASSED: ${passed}  FAILED: ${failed}`);
