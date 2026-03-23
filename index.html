@@ -309,6 +309,7 @@ input[type=range]::-webkit-slider-thumb {
   <a href="/angle-diagnostic.html" style="color:#8898b8;text-decoration:none">🔬 Angles</a>
   <a href="/dev-mode.html" style="color:#8898b8;text-decoration:none">🛠 Dev Mode</a>
   <a href="/test.html" style="color:#8898b8;text-decoration:none">✅ Tests</a>
+  <a href="/calibrate.html" style="color:#8898b8;text-decoration:none">🎯 Calibrate</a>
 </nav>
 
 <div id="commit-flash"></div>
@@ -339,6 +340,29 @@ input[type=range]::-webkit-slider-thumb {
   </div>
 
   <div class="side-panel">
+
+    <div class="panel-card">
+      <div class="panel-title">Profile</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <select id="profile-select" style="
+          flex:1; background:var(--bg); color:var(--accent); border:1px solid var(--border);
+          border-radius:5px; padding:5px 8px; font-family:var(--font-mono); font-size:0.72rem;
+          cursor:pointer;
+        ">
+          <option value="phone">Phone (Touch)</option>
+          <option value="tablet">Tablet (Touch/Stylus)</option>
+          <option value="desktop">Desktop (Mouse)</option>
+        </select>
+        <button id="btn-reset-profile" style="
+          background:var(--border); color:var(--muted); border:none; border-radius:5px;
+          padding:5px 10px; font-family:var(--font-mono); font-size:0.6rem; cursor:pointer;
+          letter-spacing:0.05em;
+        ">RESET</button>
+      </div>
+      <div style="font-size:0.55rem; color:var(--muted); letter-spacing:0.03em;">
+        Auto-detected on load. Slider changes save to active profile.
+      </div>
+    </div>
 
     <div class="panel-card">
       <div class="panel-title">Controls</div>

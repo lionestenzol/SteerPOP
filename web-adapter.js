@@ -32,6 +32,121 @@ const engine = new SteerPopEngine();
 const gestureDB = new GestureDB();
 gestureDB.open().catch(err => console.warn('GestureDB init failed:', err));
 
+// ─────────────────────────────────────────────────────────────
+// CALIBRATION PROFILES
+// ─────────────────────────────────────────────────────────────
+
+const PROFILE_PRESETS = {
+  phone: {
+    label: 'Phone (Touch)',
+    gridStepSize: 30, deadzoneRadius: 10, flickSpeedThreshold: 8,
+    flickCooldownMs: 350, warpStrength: 0.25, smoothingAlpha: 0.5,
+    momentumWeight: 0.15, sameRowHysteresis: 0.15,
+    stickySpeedGate: 3, stickyExitFraction: 0.6, stickyDirectionGate: 0.3,
+    switchCooldownMs: 120, repeatGuardFraction: 0.4,
+    frequencyWeight: 0.08, bigramWeight: 0.12,
+    fixedAnchor: true, crossRowMode: 'railcar',
+  },
+  tablet: {
+    label: 'Tablet (Touch/Stylus)',
+    gridStepSize: 35, deadzoneRadius: 8, flickSpeedThreshold: 7,
+    flickCooldownMs: 300, warpStrength: 0.15, smoothingAlpha: 0.6,
+    momentumWeight: 0.12, sameRowHysteresis: 0.12,
+    stickySpeedGate: 2.5, stickyExitFraction: 0.5, stickyDirectionGate: 0.25,
+    switchCooldownMs: 100, repeatGuardFraction: 0.35,
+    frequencyWeight: 0.08, bigramWeight: 0.12,
+    fixedAnchor: true, crossRowMode: 'railcar',
+  },
+  desktop: {
+    label: 'Desktop (Mouse)',
+    gridStepSize: 22, deadzoneRadius: 5, flickSpeedThreshold: 6,
+    flickCooldownMs: 250, warpStrength: 0.1, smoothingAlpha: 0.8,
+    momentumWeight: 0.1, sameRowHysteresis: 0.1,
+    stickySpeedGate: 2, stickyExitFraction: 0.4, stickyDirectionGate: 0.2,
+    switchCooldownMs: 80, repeatGuardFraction: 0.3,
+    frequencyWeight: 0.08, bigramWeight: 0.12,
+    fixedAnchor: true, crossRowMode: 'railcar',
+  },
+};
+
+function detectDeviceType() {
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  const isNarrow = window.innerWidth < 600;
+  const isMedium = window.innerWidth >= 600 && window.innerWidth < 1024;
+  if (hasTouch && isNarrow) return 'phone';
+  if (hasTouch && isMedium) return 'tablet';
+  return 'desktop';
+}
+
+function loadProfile(profileId) {
+  const preset = PROFILE_PRESETS[profileId];
+  if (!preset) return;
+
+  // Load saved overrides from localStorage, or use preset
+  const savedKey = `steerpop-profile-${profileId}`;
+  const saved = localStorage.getItem(savedKey);
+  const params = saved ? JSON.parse(saved) : { ...preset };
+
+  // Apply to engine
+  const { label, ...engineParams } = params;
+  engine.setConfig(engineParams);
+
+  // Sync UI sliders
+  syncSlidersToConfig(engineParams);
+
+  // Sync toggles
+  const fixedEl = document.getElementById('tog-fixedanchor');
+  if (fixedEl) fixedEl.checked = engineParams.fixedAnchor ?? true;
+  const railEl = document.getElementById('tog-railcar');
+  if (railEl) railEl.checked = (engineParams.crossRowMode ?? 'railcar') === 'railcar';
+
+  // Update profile selector
+  const sel = document.getElementById('profile-select');
+  if (sel) sel.value = profileId;
+
+  currentProfile = profileId;
+  localStorage.setItem('steerpop-active-profile', profileId);
+}
+
+function saveCurrentProfile() {
+  if (!currentProfile) return;
+  const cfg = engine.cfg;
+  const params = {};
+  const preset = PROFILE_PRESETS[currentProfile];
+  // Save all tunable params
+  for (const key of Object.keys(preset)) {
+    if (key === 'label') continue;
+    params[key] = cfg[key];
+  }
+  localStorage.setItem(`steerpop-profile-${currentProfile}`, JSON.stringify(params));
+}
+
+function syncSlidersToConfig(params) {
+  const sliderMap = {
+    gridStepSize: ['ctrl-gridstep', 'lbl-gridstep'],
+    warpStrength: ['ctrl-warp', 'lbl-warp'],
+    deadzoneRadius: ['ctrl-deadzone', 'lbl-deadzone'],
+    flickSpeedThreshold: ['ctrl-flickspeed', 'lbl-flickspeed'],
+    sameRowHysteresis: ['ctrl-samerow', 'lbl-samerow'],
+    stickySpeedGate: ['ctrl-speedgate', 'lbl-speedgate'],
+    stickyExitFraction: ['ctrl-exitfrac', 'lbl-exitfrac'],
+    stickyDirectionGate: ['ctrl-dirgate', 'lbl-dirgate'],
+    switchCooldownMs: ['ctrl-switchcool', 'lbl-switchcool'],
+    repeatGuardFraction: ['ctrl-repeatguard', 'lbl-repeatguard'],
+    frequencyWeight: ['ctrl-freqwt', 'lbl-freqwt'],
+    bigramWeight: ['ctrl-bigramwt', 'lbl-bigramwt'],
+  };
+  for (const [param, [sliderId, labelId]] of Object.entries(sliderMap)) {
+    if (params[param] === undefined) continue;
+    const el = document.getElementById(sliderId);
+    const lbl = document.getElementById(labelId);
+    if (el) el.value = params[param];
+    if (lbl) lbl.textContent = params[param];
+  }
+}
+
+let currentProfile = null;
+
 // DOM refs
 const kbWrap     = document.getElementById('keyboard-wrap');
 const canvas     = document.getElementById('halo-canvas');
@@ -741,6 +856,7 @@ function bindSlider(id, lblId, engineProp, uiProp, parseFn = parseFloat) {
     lb.textContent = el.value;
     if (engineProp) engine.setConfig({ [engineProp]: val });
     if (uiProp)     ui[uiProp] = val;
+    saveCurrentProfile();
   });
 }
 
@@ -760,14 +876,37 @@ bindSlider('ctrl-bigramwt',   'lbl-bigramwt',   'bigramWeight',        null);
 
 document.getElementById('tog-fixedanchor')?.addEventListener('change',   e => {
   engine.setConfig({ fixedAnchor: e.target.checked });
+  saveCurrentProfile();
 });
 document.getElementById('tog-railcar')?.addEventListener('change',      e => {
   engine.setConfig({ crossRowMode: e.target.checked ? 'railcar' : 'raytrace' });
+  saveCurrentProfile();
 });
 document.getElementById('tog-halo')?.addEventListener('change',         e => ui.showTopBubble  = e.target.checked);
 document.getElementById('tog-highlights')?.addEventListener('change',   e => ui.showHighlights = e.target.checked);
 document.getElementById('tog-suggest')?.addEventListener('change',      e => ui.showSuggest    = e.target.checked);
 document.getElementById('tog-debug-labels')?.addEventListener('change', e => ui.showDebugLabels = e.target.checked);
+
+// ─────────────────────────────────────────────────────────────
+// PROFILE SELECTOR
+// ─────────────────────────────────────────────────────────────
+
+document.getElementById('profile-select')?.addEventListener('change', e => {
+  loadProfile(e.target.value);
+});
+
+document.getElementById('btn-reset-profile')?.addEventListener('click', () => {
+  if (!currentProfile) return;
+  localStorage.removeItem(`steerpop-profile-${currentProfile}`);
+  loadProfile(currentProfile);
+});
+
+// Auto-detect and load profile on boot
+{
+  const saved = localStorage.getItem('steerpop-active-profile');
+  const detected = detectDeviceType();
+  loadProfile(saved || detected);
+}
 
 // ─────────────────────────────────────────────────────────────
 // CLEAR

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SteerPOP — Calibration</title>
+<style>
+:root {
+  --bg: #080a0d; --surface: #0e1118; --border: #1a2030;
+  --accent: #00d4ff; --commit-col: #00ffaa; --armed-col: #ffb700;
+  --text: #c8d0e0; --muted: #5a6580;
+  --font-mono: 'SF Mono','Fira Code','Consolas',monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-mono); min-height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+nav { display:flex;gap:12px;padding:8px 16px;background:#0e1118;border-bottom:1px solid #1a2030;font-size:13px;flex-wrap:wrap;font-family:sans-serif; }
+nav a { text-decoration:none; }
+
+.main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; gap:20px; }
+.phase-title { font-size:1.1rem; color:var(--accent); letter-spacing:0.1em; text-transform:uppercase; }
+.instruction { font-size:0.85rem; color:var(--muted); text-align:center; max-width:400px; line-height:1.6; }
+.progress-bar { width:300px; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+.progress-fill { height:100%; background:var(--accent); border-radius:3px; transition:width 0.3s; }
+.target-word { font-size:2rem; color:var(--commit-col); letter-spacing:0.15em; font-weight:700; }
+.typed-output { font-size:1.2rem; color:var(--text); letter-spacing:0.1em; min-height:1.8rem; }
+.status-line { font-size:0.7rem; color:var(--muted); }
+
+/* Keyboard */
+.keyboard { padding:10px 20px 20px; display:flex; flex-direction:column; align-items:center; gap:5px; touch-action:none; user-select:none; }
+.kb-row { display:flex; gap:5px; }
+.key { width:50px; height:50px; background:#131820; border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:0.8rem; color:var(--muted); transition: border-color 0.1s, background 0.1s; }
+.key.target { border-color:var(--armed-col); background:rgba(255,183,0,0.12); color:var(--armed-col); box-shadow:0 0 12px rgba(255,183,0,0.2); }
+.key.anchor { border-color:var(--accent); background:rgba(0,212,255,0.1); color:var(--accent); }
+.key.hit { border-color:var(--commit-col); background:rgba(0,255,170,0.15); color:var(--commit-col); }
+
+/* Results */
+.results { display:none; flex-direction:column; gap:16px; align-items:center; max-width:500px; width:100%; }
+.results.show { display:flex; }
+.result-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; width:100%; }
+.result-card { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:10px 14px; }
+.result-label { font-size:0.55rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px; }
+.result-val { font-size:1.1rem; color:var(--accent); }
+.result-val.tuned { color:var(--commit-col); }
+.btn-apply { background:rgba(0,255,170,0.15); border:1px solid var(--commit-col); color:var(--commit-col); padding:10px 32px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem; cursor:pointer; letter-spacing:0.05em; transition:background 0.15s; }
+.btn-apply:hover { background:rgba(0,255,170,0.25); }
+.btn-retry { background:var(--surface); border:1px solid var(--border); color:var(--muted); padding:8px 20px; border-radius:6px; font-family:var(--font-mono); font-size:0.75rem; cursor:pointer; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" style="color:#8898b8">⌨ Keyboard</a>
+  <a href="/steer-visualizer.html" style="color:#8898b8">📐 Visualizer</a>
+  <a href="/angle-diagnostic.html" style="color:#8898b8">🔬 Angles</a>
+  <a href="/dev-mode.html" style="color:#8898b8">🛠 Dev Mode</a>
+  <a href="/test.html" style="color:#8898b8">✅ Tests</a>
+  <a href="/calibrate.html" style="color:#00d4ff;font-weight:bold">🎯 Calibrate</a>
+</nav>
+
+<div class="main" id="main-area">
+  <div class="phase-title" id="phase-title">Phase 1: Swipe Calibration</div>
+  <div class="instruction" id="instruction">Tap the blue key, then swipe toward the orange target. Repeat for each direction.</div>
+  <div class="progress-bar"><div class="progress-fill" id="progress" style="width:0%"></div></div>
+  <div class="target-word" id="target-word" style="display:none"></div>
+  <div class="typed-output" id="typed-output" style="display:none"></div>
+  <div class="status-line" id="status-line"></div>
+</div>
+
+<div class="results" id="results">
+  <div class="phase-title">Calibration Complete</div>
+  <div class="result-grid" id="result-grid"></div>
+  <div style="display:flex;gap:12px;margin-top:8px;">
+    <button class="btn-apply" id="btn-apply">APPLY TO PROFILE</button>
+    <button class="btn-retry" id="btn-retry">RETRY</button>
+  </div>
+</div>
+
+<div class="keyboard" id="keyboard"></div>
+
+<script type="module">
+import { SteerPopEngine } from './steerpop-engine.js';
+
+// ─── GEOMETRY ────────────────────────────────────────────
+const ROWS = [
+  ['Q','W','E','R','T','Y','U','I','O','P'],
+  ['A','S','D','F','G','H','J','K','L'],
+  ['Z','X','C','V','B','N','M'],
+];
+const KEY_W = 50, GAP = 5;
+const kbEl = document.getElementById('keyboard');
+const keyEls = {};
+const geometry = [];
+
+ROWS.forEach((row, ri) => {
+  const rowEl = document.createElement('div');
+  rowEl.className = 'kb-row';
+  row.forEach((label, ci) => {
+    const el = document.createElement('div');
+    el.className = 'key';
+    el.textContent = label;
+    el.dataset.id = label;
+    rowEl.appendChild(el);
+    keyEls[label] = el;
+
+    const rect = { centerX: ri * 15 + ci * (KEY_W + GAP) + KEY_W / 2, centerY: ri * (KEY_W + GAP) + KEY_W / 2 };
+    geometry.push({ id: label, label, row: ri, col: ci, centerX: rect.centerX, centerY: rect.centerY, width: KEY_W, height: KEY_W, excluded: false });
+  });
+  kbEl.appendChild(rowEl);
+});
+
+// ─── ENGINE ──────────────────────────────────────────────
+const engine = new SteerPopEngine();
+engine.setGeometry(geometry);
+
+// ─── STATE ───────────────────────────────────────────────
+let phase = 1;
+let trialIndex = 0;
+let swipeData = [];
+let wordData = [];
+let currentWordIdx = 0;
+let typedLetters = '';
+let wordStartTime = 0;
+let wordErrors = 0;
+let sessionActive = false;
+let pointerTrail = [];
+
+const SWIPE_TRIALS = [
+  { anchor: 'G', target: 'T', dir: 'up' },
+  { anchor: 'G', target: 'B', dir: 'down' },
+  { anchor: 'G', target: 'J', dir: 'right' },
+  { anchor: 'G', target: 'D', dir: 'left' },
+  { anchor: 'H', target: 'Y', dir: 'up' },
+  { anchor: 'H', target: 'N', dir: 'down' },
+  { anchor: 'H', target: 'K', dir: 'right' },
+  { anchor: 'H', target: 'F', dir: 'left' },
+];
+
+const WORDS = ['THE', 'HELLO', 'WORLD', 'QUICK', 'BRIDGE'];
+
+const phaseTitle = document.getElementById('phase-title');
+const instruction = document.getElementById('instruction');
+const progressEl = document.getElementById('progress');
+const targetWordEl = document.getElementById('target-word');
+const typedOutputEl = document.getElementById('typed-output');
+const statusLine = document.getElementById('status-line');
+const mainArea = document.getElementById('main-area');
+const resultsEl = document.getElementById('results');
+
+// ─── PHASE 1: SWIPE CALIBRATION ─────────────────────────
+function showSwipeTrial() {
+  if (trialIndex >= SWIPE_TRIALS.length) {
+    startPhase2();
+    return;
+  }
+  const trial = SWIPE_TRIALS[trialIndex];
+  clearKeyStates();
+  keyEls[trial.anchor].classList.add('anchor');
+  keyEls[trial.target].classList.add('target');
+  statusLine.textContent = `Trial ${trialIndex + 1} / ${SWIPE_TRIALS.length} — Swipe ${trial.dir}`;
+  progressEl.style.width = `${(trialIndex / (SWIPE_TRIALS.length + WORDS.length)) * 100}%`;
+}
+
+function clearKeyStates() {
+  for (const el of Object.values(keyEls)) {
+    el.classList.remove('anchor', 'target', 'hit');
+  }
+}
+
+// ─── PHASE 2: WORD CHALLENGE ─────────────────────────────
+function startPhase2() {
+  phase = 2;
+  phaseTitle.textContent = 'Phase 2: Word Challenge';
+  instruction.textContent = 'Type the word shown. Tap the first letter, swipe + flick for each next letter.';
+  targetWordEl.style.display = 'block';
+  typedOutputEl.style.display = 'block';
+  showWord();
+}
+
+function showWord() {
+  if (currentWordIdx >= WORDS.length) {
+    showResults();
+    return;
+  }
+  const word = WORDS[currentWordIdx];
+  targetWordEl.textContent = word;
+  typedLetters = '';
+  typedOutputEl.textContent = '_';
+  wordErrors = 0;
+  wordStartTime = performance.now();
+  clearKeyStates();
+  // Highlight first letter
+  keyEls[word[0]]?.classList.add('target');
+  statusLine.textContent = `Word ${currentWordIdx + 1} / ${WORDS.length}`;
+  progressEl.style.width = `${((SWIPE_TRIALS.length + currentWordIdx) / (SWIPE_TRIALS.length + WORDS.length)) * 100}%`;
+}
+
+// ─── POINTER HANDLING ────────────────────────────────────
+let activePointerId = null;
+let trialStartTime = 0;
+let trialAnchorPos = null;
+
+function getPointerPos(e) {
+  const rect = kbEl.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function hitTestKey(x, y) {
+  for (const el of Object.values(keyEls)) {
+    const r = el.getBoundingClientRect();
+    const kr = kbEl.getBoundingClientRect();
+    if (x >= r.left - kr.left && x <= r.right - kr.left && y >= r.top - kr.top && y <= r.bottom - kr.top) {
+      return el.dataset.id;
+    }
+  }
+  return null;
+}
+
+kbEl.addEventListener('pointerdown', (e) => {
+  if (activePointerId !== null) return;
+  activePointerId = e.pointerId;
+  kbEl.setPointerCapture(e.pointerId);
+  const pos = getPointerPos(e);
+  const ts = performance.now();
+  pointerTrail = [{ x: pos.x, y: pos.y, t: ts }];
+
+  if (phase === 1) {
+    trialStartTime = ts;
+    const trial = SWIPE_TRIALS[trialIndex];
+    if (trial) {
+      const anchorEl = keyEls[trial.anchor];
+      const rect = anchorEl.getBoundingClientRect();
+      const kbRect = kbEl.getBoundingClientRect();
+      trialAnchorPos = { x: rect.left + rect.width/2 - kbRect.left, y: rect.top + rect.height/2 - kbRect.top };
+    }
+  }
+
+  // Feed to engine for phase 2
+  if (phase === 2) {
+    const kgeo = findKeyGeo(pos.x, pos.y);
+    if (kgeo) {
+      engine.pointerDown({ x: kgeo.centerX, y: kgeo.centerY, timestamp: ts });
+    }
+  }
+});
+
+kbEl.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== activePointerId) return;
+  const pos = getPointerPos(e);
+  const ts = performance.now();
+  pointerTrail.push({ x: pos.x, y: pos.y, t: ts });
+
+  if (phase === 2) {
+    engine.pointerMove({ x: pos.x, y: pos.y, timestamp: ts });
+  }
+});
+
+kbEl.addEventListener('pointerup', (e) => {
+  if (e.pointerId !== activePointerId) return;
+  activePointerId = null;
+  const pos = getPointerPos(e);
+  const ts = performance.now();
+  pointerTrail.push({ x: pos.x, y: pos.y, t: ts });
+
+  if (phase === 1) {
+    completeSwipeTrial();
+  }
+
+  if (phase === 2) {
+    engine.pointerUp({ x: pos.x, y: pos.y, timestamp: ts });
+    processPhase2Events();
+  }
+});
+
+kbEl.addEventListener('pointercancel', (e) => { activePointerId = null; });
+
+function findKeyGeo(x, y) {
+  // Map screen coords to geometry coords (approximate)
+  let best = null, bestDist = Infinity;
+  for (const el of Object.values(keyEls)) {
+    const r = el.getBoundingClientRect();
+    const kr = kbEl.getBoundingClientRect();
+    const cx = r.left + r.width/2 - kr.left;
+    const cy = r.top + r.height/2 - kr.top;
+    const d = Math.hypot(x - cx, y - cy);
+    if (d < bestDist) { bestDist = d; best = geometry.find(k => k.id === el.dataset.id); }
+  }
+  return best;
+}
+
+// ─── SWIPE MEASUREMENT ──────────────────────────────────
+function completeSwipeTrial() {
+  if (trialIndex >= SWIPE_TRIALS.length) return;
+  const trial = SWIPE_TRIALS[trialIndex];
+  const trail = pointerTrail;
+
+  if (trail.length < 3) {
+    // Too short, retry
+    statusLine.textContent = 'Swipe was too short — try again';
+    return;
+  }
+
+  const totalTime = trail[trail.length - 1].t - trail[0].t;
+  if (totalTime < 30) {
+    statusLine.textContent = 'Too fast — hold and swipe toward the target';
+    return;
+  }
+
+  // Compute speed
+  const totalDist = trail.reduce((sum, p, i) => {
+    if (i === 0) return 0;
+    return sum + Math.hypot(p.x - trail[i-1].x, p.y - trail[i-1].y);
+  }, 0);
+  const speed = totalDist / (totalTime / 1000);
+
+  // Compute jitter (perpendicular deviation from straight line start→end)
+  const sx = trail[0].x, sy = trail[0].y;
+  const ex = trail[trail.length-1].x, ey = trail[trail.length-1].y;
+  const lineLen = Math.hypot(ex - sx, ey - sy);
+  let jitterSum = 0;
+  if (lineLen > 5) {
+    const nx = -(ey - sy) / lineLen, ny = (ex - sx) / lineLen;
+    for (const p of trail) {
+      const proj = (p.x - sx) * nx + (p.y - sy) * ny;
+      jitterSum += Math.abs(proj);
+    }
+  }
+  const avgJitter = jitterSum / trail.length;
+
+  // Reaction time (time from start to first significant movement)
+  let reactionTime = totalTime;
+  for (let i = 1; i < trail.length; i++) {
+    const d = Math.hypot(trail[i].x - trail[0].x, trail[i].y - trail[0].y);
+    if (d > 8) { reactionTime = trail[i].t - trail[0].t; break; }
+  }
+
+  swipeData.push({ dir: trial.dir, speed, avgJitter, reactionTime, totalDist, totalTime });
+  keyEls[trial.target].classList.remove('target');
+  keyEls[trial.target].classList.add('hit');
+
+  trialIndex++;
+  setTimeout(showSwipeTrial, 400);
+}
+
+// ─── WORD MEASUREMENT ───────────────────────────────────
+function processPhase2Events() {
+  const events = engine.consumeEvents();
+  for (const ev of events) {
+    if (ev.type === 'letter_committed' && ev.label) {
+      const word = WORDS[currentWordIdx];
+      if (!word) continue;
+      const expectedChar = word[typedLetters.length];
+      typedLetters += ev.label;
+      if (ev.label !== expectedChar) wordErrors++;
+
+      typedOutputEl.textContent = typedLetters + (typedLetters.length < word.length ? '_' : '');
+      clearKeyStates();
+      // Highlight next expected letter
+      if (typedLetters.length < word.length) {
+        const next = word[typedLetters.length];
+        keyEls[next]?.classList.add('target');
+      }
+
+      if (typedLetters.length >= word.length) {
+        // Word complete
+        const elapsed = (performance.now() - wordStartTime) / 1000;
+        const cps = word.length / elapsed;
+        wordData.push({ word, elapsed, cps, errors: wordErrors, length: word.length });
+        currentWordIdx++;
+        engine.reset();
+        setTimeout(showWord, 600);
+      }
+    }
+  }
+}
+
+// ─── RESULTS ─────────────────────────────────────────────
+function showResults() {
+  mainArea.style.display = 'none';
+  kbEl.style.display = 'none';
+  resultsEl.classList.add('show');
+  progressEl.style.width = '100%';
+
+  // Compute swipe averages
+  const avgSpeed = swipeData.reduce((s, d) => s + d.speed, 0) / swipeData.length;
+  const avgJitter = swipeData.reduce((s, d) => s + d.avgJitter, 0) / swipeData.length;
+  const speeds = swipeData.map(d => d.speed);
+  const speedMean = avgSpeed;
+  const speedVar = Math.sqrt(speeds.reduce((s, v) => s + (v - speedMean) ** 2, 0) / speeds.length);
+
+  // Compute word averages
+  const avgCPS = wordData.length > 0 ? wordData.reduce((s, d) => s + d.cps, 0) / wordData.length : 0;
+  const totalErrors = wordData.reduce((s, d) => s + d.errors, 0);
+  const totalChars = wordData.reduce((s, d) => s + d.length, 0);
+  const errorRate = totalChars > 0 ? totalErrors / totalChars : 0;
+
+  // Compute tuned params
+  const tuned = {
+    flickSpeedThreshold: Math.max(4, Math.round(avgSpeed * 0.006)),
+    stickySpeedGate: Math.max(1, +(avgSpeed * 0.0025).toFixed(1)),
+    deadzoneRadius: Math.max(4, Math.round(avgJitter * 1.5)),
+    smoothingAlpha: avgJitter > 6 ? 0.4 : avgJitter > 3 ? 0.6 : 0.8,
+    snapAccelRatio: speedVar > avgSpeed * 0.4 ? 1.5 : 2.0,
+    gridStepSize: errorRate > 0.15 ? 35 : errorRate > 0.05 ? 30 : 25,
+    hysteresis: errorRate > 0.15 ? 0.4 : 0.3,
+    sameRowHysteresis: errorRate > 0.15 ? 0.2 : 0.12,
+    flickCooldownMs: avgCPS > 3 ? 250 : avgCPS > 2 ? 300 : 400,
+    stickyExitFraction: errorRate > 0.1 ? 0.7 : 0.5,
+  };
+
+  // Store for apply
+  window._calibrationTuned = tuned;
+  window._calibrationMeasured = { avgSpeed, avgJitter, speedVar, avgCPS, errorRate };
+
+  // Render results
+  const grid = document.getElementById('result-grid');
+  grid.innerHTML = `
+    <div class="result-card"><div class="result-label">Avg Swipe Speed</div><div class="result-val">${avgSpeed.toFixed(0)} px/s</div></div>
+    <div class="result-card"><div class="result-label">Avg Jitter</div><div class="result-val">${avgJitter.toFixed(1)} px</div></div>
+    <div class="result-card"><div class="result-label">Speed Variance</div><div class="result-val">${speedVar.toFixed(0)} px/s</div></div>
+    <div class="result-card"><div class="result-label">Typing Speed</div><div class="result-val">${avgCPS.toFixed(1)} chars/s</div></div>
+    <div class="result-card"><div class="result-label">Error Rate</div><div class="result-val">${(errorRate * 100).toFixed(0)}%</div></div>
+    <div class="result-card"><div class="result-label">Words Typed</div><div class="result-val">${wordData.length} / ${WORDS.length}</div></div>
+    <div class="result-card" style="grid-column:1/-1;border-color:var(--commit-col)">
+      <div class="result-label" style="color:var(--commit-col)">Tuned Parameters</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px;font-size:0.65rem;">
+        ${Object.entries(tuned).map(([k, v]) => `<div style="color:var(--muted)">${k}</div><div class="result-val tuned" style="font-size:0.75rem">${v}</div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ─── APPLY + RETRY ───────────────────────────────────────
+document.getElementById('btn-apply').addEventListener('click', () => {
+  const tuned = window._calibrationTuned;
+  if (!tuned) return;
+  // Save to active profile in localStorage
+  const activeProfile = localStorage.getItem('steerpop-active-profile') || 'phone';
+  const savedKey = `steerpop-profile-${activeProfile}`;
+  const existing = localStorage.getItem(savedKey);
+  const params = existing ? JSON.parse(existing) : {};
+  Object.assign(params, tuned);
+  localStorage.setItem(savedKey, JSON.stringify(params));
+  localStorage.setItem('steerpop-calibration-results', JSON.stringify({
+    measured: window._calibrationMeasured,
+    tuned,
+    timestamp: Date.now(),
+  }));
+  // Navigate to keyboard
+  window.location.href = '/';
+});
+
+document.getElementById('btn-retry').addEventListener('click', () => {
+  window.location.reload();
+});
+
+// ─── BOOT ────────────────────────────────────────────────
+showSwipeTrial();
+</script>
+</body>
+</html>
