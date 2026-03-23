@@ -1243,21 +1243,24 @@ function runTests() {
     engine.pointerUp({ x: W.x, y: W.y, timestamp: 9050 });
     engine.consumeEvents();
 
-    // Short slide right — pointer near E's X position
+    // Step-based same-row: swipe distance determines key, not pointer position.
+    // E is 1st neighbor (step 1 = 30px), R is 2nd (step 2 = 60px).
+    const stepSize = 30;
+
     engine.pointerDown({ x: W.x, y: W.y, timestamp: 9200 });
-    engine.pointerMove({ x: E.x, y: W.y, timestamp: 9300 });
+    // Swipe to step 1 (30px right) → E
+    engine.pointerMove({ x: W.x + stepSize, y: W.y, timestamp: 9300 });
 
     const state1 = engine.getState();
-    assert(state1.topCandidate === 'E', `pointer near E selects E (got ${state1.topCandidate})`);
+    assert(state1.topCandidate === 'E', `step 1 selects E (got ${state1.topCandidate})`);
 
-    // Slide further — pointer near R's X position (multiple moves for EMA convergence)
-    const midX = (E.x + R.x) / 2;
-    engine.pointerMove({ x: midX, y: W.y, timestamp: 9350 });
-    engine.pointerMove({ x: R.x, y: W.y, timestamp: 9400 });
-    engine.pointerMove({ x: R.x, y: W.y, timestamp: 9420 });
+    // Swipe to step 2 (60px right) → R (multiple moves for EMA convergence)
+    engine.pointerMove({ x: W.x + stepSize * 1.5, y: W.y, timestamp: 9350 });
+    engine.pointerMove({ x: W.x + stepSize * 2, y: W.y, timestamp: 9400 });
+    engine.pointerMove({ x: W.x + stepSize * 2, y: W.y, timestamp: 9420 });
 
     const state2 = engine.getState();
-    assert(state2.topCandidate === 'R', `pointer near R selects R (got ${state2.topCandidate})`);
+    assert(state2.topCandidate === 'R', `step 2 selects R (got ${state2.topCandidate})`);
 
     engine.pointerUp({ x: R.x, y: W.y, timestamp: 9450 });
     engine.consumeEvents();

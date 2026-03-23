@@ -231,6 +231,7 @@
           <div class="debug-cell"><div class="d-label">Candidates</div><div class="d-value" id="dbg-cands">0</div></div>
           <div class="debug-cell"><div class="d-label">Confidence</div><div class="d-value d-accent" id="dbg-confidence">0</div></div>
           <div class="debug-cell"><div class="d-label">Conf Zone</div><div class="d-value d-muted" id="dbg-confzone">none</div></div>
+          <div class="debug-cell"><div class="d-label">Momentum</div><div class="d-value" id="dbg-momentum">0</div></div>
           <div class="debug-cell full"><div class="d-label">Last Commit</div><div class="d-value d-commit" id="dbg-last">&mdash;</div></div>
         </div>
       </div>
@@ -430,8 +431,8 @@ touchSurface.addEventListener('click', e => {
 function processEvents() {
   const events = engine.consumeEvents();
   for (const ev of events) {
-    if (ev.type === 'letter_committed' || ev.type === 'flick_confirmed') {
-      committedText += ev.key;
+    if (ev.type === 'letter_committed') {
+      committedText += ev.label;
       lastAnchorId = ev.key;
     }
     eventLogLines.unshift(`${ev.type}: ${ev.key || ''}`);
@@ -440,6 +441,113 @@ function processEvents() {
   committedEl.textContent = committedText;
   eventLogEl.innerHTML = eventLogLines.map(l => `<div>${l}</div>`).join('');
 }
+
+// ── Typing Simulation (browser-level) ─────────────────
+// Usage: await simulateWord('hello')  — returns committed text
+window.simulateWord = async function simulateWord(word, debug = false) {
+  // Reset state
+  committedText = '';
+  committedEl.textContent = '';
+  engine.reset();
+  eventLogLines = [];
+  const debugLog = [];
+
+  const letters = word.toUpperCase().split('');
+  const keyMap = {};
+  for (const k of geometry) keyMap[k.id] = k;
+
+  const FLICK = 35;
+  let t = 0; // synthetic monotonic clock — no real-time dependency
+
+  // Tap first letter
+  const first = keyMap[letters[0]];
+  engine.pointerDown({ x: first.centerX, y: first.centerY, timestamp: t });
+  processEvents(); scheduleRender();
+  t += 50;
+
+  for (let i = 1; i < letters.length; i++) {
+    const from = keyMap[letters[i - 1]];
+    const to = keyMap[letters[i]];
+    const isRepeat = letters[i] === letters[i - 1];
+
+    if (isRepeat) {
+      // Idle moves to fill velocity buffer
+      for (let d = 0; d < 5; d++) {
+        engine.pointerMove({ x: from.centerX, y: from.centerY, timestamp: t }); t += 16;
+      }
+      // Flick down
+      engine.pointerMove({ x: from.centerX, y: from.centerY + FLICK * 0.23, timestamp: t }); t += 10;
+      engine.pointerMove({ x: from.centerX, y: from.centerY + FLICK * 0.57, timestamp: t }); t += 10;
+      engine.pointerMove({ x: from.centerX, y: from.centerY + FLICK, timestamp: t }); t += 10;
+      processEvents();
+      t += 400;
+      continue;
+    }
+
+    // Compute slide target: step-based for same-row, physical for cross-row
+    const crossRow = from.row !== to.row;
+    let targetX, targetY;
+    if (crossRow) {
+      targetX = to.centerX;
+      targetY = to.centerY;
+    } else {
+      const GRID_STEP = 30;
+      const dir = to.centerX > from.centerX ? 1 : -1;
+      const rowKeys = geometry.filter(k => k.row === from.row && !k.excluded);
+      const sorted = dir > 0
+        ? rowKeys.filter(k => k.centerX > from.centerX).sort((a, b) => a.centerX - b.centerX)
+        : rowKeys.filter(k => k.centerX < from.centerX).sort((a, b) => b.centerX - a.centerX);
+      const idx = sorted.findIndex(k => k.id === to.id);
+      targetX = from.centerX + dir * (idx + 1) * GRID_STEP;
+      targetY = from.centerY;
+    }
+
+    // Slide toward target
+    for (let s = 1; s <= 6; s++) {
+      const frac = s / 6;
+      engine.pointerMove({
+        x: from.centerX + (targetX - from.centerX) * frac,
+        y: from.centerY + (targetY - from.centerY) * frac,
+        timestamp: t,
+      });
+      t += 16;
+    }
+    // Dwell
+    for (let d = 0; d < 4; d++) {
+      engine.pointerMove({ x: targetX, y: targetY, timestamp: t }); t += 25;
+    }
+    if (debug) {
+      const st = engine.getState();
+      debugLog.push({ letter: to.id, top: st.topCandidate, conf: st.confidence?.toFixed(2), row: st.activeRow, dir: st.swipeDirection, cands: st.candidates.slice(0,3).map(c => c.id) });
+    }
+    // Flick up
+    engine.pointerMove({ x: targetX, y: targetY - FLICK * 0.23, timestamp: t }); t += 10;
+    engine.pointerMove({ x: targetX, y: targetY - FLICK * 0.57, timestamp: t }); t += 10;
+    engine.pointerMove({ x: targetX, y: targetY - FLICK, timestamp: t }); t += 10;
+    processEvents();
+    if (debug) debugLog.push({ afterFlick: committedText });
+    t += 400;
+  }
+
+  engine.pointerUp({ x: 0, y: 0, timestamp: t });
+  processEvents(); scheduleRender();
+  if (debug) return { result: committedText, debug: debugLog };
+  return committedText;
+};
+
+// Run multiple words and report results
+window.simulateWords = async function simulateWords(words) {
+  const results = [];
+  for (const word of words) {
+    const got = await simulateWord(word);
+    const expected = word.toUpperCase();
+    results.push({ word, expected, got, pass: got === expected });
+    console.log(`${got === expected ? '✓' : '✗'} "${word}" → ${got}${got !== expected ? ' (expected ' + expected + ')' : ''}`);
+  }
+  const passed = results.filter(r => r.pass).length;
+  console.log(`\n${passed}/${results.length} passed`);
+  return results;
+};
 
 // ── Render ────────────────────────────────────────────
 let renderPending = false;
@@ -636,6 +744,10 @@ function updateDebugPanel(s) {
   const confzoneEl = document.getElementById('dbg-confzone');
   confzoneEl.textContent = zone;
   confzoneEl.className = `d-value ${zone === 'hot' ? 'd-accent' : zone === 'warm' ? 'd-armed' : 'd-muted'}`;
+  const mom = s.momentum || 0;
+  const momEl = document.getElementById('dbg-momentum');
+  momEl.textContent = mom.toFixed(2);
+  momEl.className = `d-value ${mom > 0.5 ? 'd-accent' : mom > 0.2 ? 'd-armed' : 'd-muted'}`;
   document.getElementById('dbg-last').textContent = s.lastCommittedKey || '—';
 }
 

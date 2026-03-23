@@ -30,6 +30,11 @@ const DEFAULT_CONFIG = Object.freeze({
   useScoring:           false,   // false = grid path (default), true = scoring path
   candidateAngleSpread: 100,     // cone width in degrees (visual + scoring path)
   smoothingAlpha:       0.6,     // EMA weight for pointer smoothing (1 = no smoothing)
+  momentumWeight:       0.15,    // how much velocity-direction alignment boosts scoring (0 = off)
+  hotRadius:            0.3,     // fraction of key spacing — force-lock when pointer is this close
+  lingerMs:             80,      // ms to freeze candidates after a commit (post-commit stability)
+  snapSpeedThreshold:   10,      // min horizontal speed for snap commit (same-row)
+  snapAccelRatio:       2.0,     // recent speed must be this × prior speed (slow→fast detection)
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -335,6 +340,7 @@ export class SteerPopEngine {
     }
 
     this._updateVelocity();
+    this._updateMomentum();
 
     // EMA pointer smoothing for candidate generation (not velocity)
     const alpha = this.cfg.smoothingAlpha;
@@ -360,6 +366,11 @@ export class SteerPopEngine {
       } else {
         return;
       }
+    }
+
+    // Linger gate: freeze candidates briefly after commit for post-commit stability
+    if (s.lingerUntil && p.timestamp < s.lingerUntil) {
+      return;
     }
 
     // Layer 1: compute swipe angle and detect row vs lateral intent
@@ -388,15 +399,18 @@ export class SteerPopEngine {
           ? this._rowCenters[this._rowCenters.length - 1].row : 2;
 
         let bestRow = anchorKey.row;
+        let bestDist = Infinity;
         const anchorY = anchorKey.centerY;
         for (const rc of this._rowCenters) {
           if (rc.row === anchorKey.row) continue;
           const rowY = rc.y;
+          // Only consider rows in the direction of motion
           if ((rowY - anchorY) * dy <= 0) continue;
-          const t = (rowY - anchorY) / dy;
-          if (t > 0) {
+          // Pick the row whose center is closest to the pointer Y
+          const distToPointer = Math.abs(rc.y - p.y);
+          if (distToPointer < bestDist) {
+            bestDist = distToPointer;
             bestRow = rc.row;
-            break;
           }
         }
         newRow = bestRow;
@@ -428,16 +442,27 @@ export class SteerPopEngine {
       s.swipeDirection = dx > 0 ? 'right' : 'left';
     }
 
-    // Generate candidates: grid path (default) or scoring path
-    if (this.cfg.useScoring) {
-      this._generateRowLockedCandidates(p.timestamp);
-    } else {
-      this._generateGridCandidates(p.timestamp);
+    // Freeze candidates during flick-speed near-vertical motion when a target is locked.
+    // This prevents the flick gesture from switching rows and overwriting lockedTarget.
+    // Only triggers for strongly vertical motion (>3x horizontal) to avoid blocking
+    // legitimate diagonal cross-row slides.
+    const isFlickSpeed = s.speed > this.cfg.flickSpeedThreshold;
+    const isNearVertical = Math.abs(s.velocity.y) > Math.abs(s.velocity.x) * 3;
+    const skipCandidates = isFlickSpeed && isNearVertical && s.lockedTarget;
+
+    if (!skipCandidates) {
+      // Generate candidates: grid path (default) or scoring path
+      if (this.cfg.useScoring) {
+        this._generateRowLockedCandidates(p.timestamp);
+      } else {
+        this._generateGridCandidates(p.timestamp);
+      }
     }
 
-    // Layer 2: check for flick gestures
+    // Layer 2: check for commit gestures
     this._checkFlickUp(p.timestamp);
     this._checkFlickDown(p.timestamp);
+    this._checkHorizontalSnap(p.timestamp);
   }
 
   pointerUp(p) {
@@ -552,6 +577,7 @@ export class SteerPopEngine {
       suggestionConsole,
       confidence: s.confidence,
       confidenceZone: s.confidenceZone,
+      momentum: s.momentum,
       debugValues: this._debugValues(),
     };
   }
@@ -593,6 +619,9 @@ export class SteerPopEngine {
       confidence:              0,        // 0-1 certainty of current selection
       confidenceZone:          'none',   // 'hot' | 'warm' | 'uncertain' | 'none'
       topCandidateSince:       0,        // timestamp when current topCandidate was set
+      // Momentum & linger
+      momentum:                0,        // velocity * direction stability (0-1)
+      lingerUntil:             0,        // timestamp until candidates are frozen after commit
     };
   }
 
@@ -672,8 +701,11 @@ export class SteerPopEngine {
       ordered = warpedKeys.slice();
     } else if (dir === 'right') {
       ordered = warpedKeys.filter(k => k.centerX > anchorKey.centerX);
+      // Sort by distance from anchor (nearest first) for step-based indexing
+      ordered.sort((a, b) => a.centerX - b.centerX);
     } else if (dir === 'left') {
       ordered = warpedKeys.filter(k => k.centerX < anchorKey.centerX);
+      ordered.sort((a, b) => b.centerX - a.centerX); // nearest first
     } else {
       // Vertical — all keys on target row
       ordered = warpedKeys.slice();
@@ -685,9 +717,6 @@ export class SteerPopEngine {
       return;
     }
 
-    // ANGLE-BASED AIMING: project ray from anchor through pointer to pick target
-    // A short push in a direction selects the key you're pointing at — no need to
-    // drag your finger all the way to the target key.
     const adx = px - anchorKey.centerX;
     const ady = py - anchorKey.centerY;
 
@@ -699,27 +728,63 @@ export class SteerPopEngine {
       keySpacing = (sorted[sorted.length - 1].centerX - sorted[0].centerX) / (sorted.length - 1);
     }
 
-    // Compute aim point and score with continuous Gaussian (not discrete index)
-    let hitX;
-    if (crossRow && Math.abs(ady) > 1) {
-      const targetRowY = ordered[0].centerY;
-      const t = (targetRowY - anchorKey.centerY) / ady;
-      hitX = anchorKey.centerX + adx * t;
-    } else {
-      hitX = null; // same-row: use warped pointer distance
-    }
+    // Momentum: boost keys aligned with velocity direction
+    const mw = this.cfg.momentumWeight;
+    const hasVel = s.speed > 1;
+    const velNorm = hasVel ? vecNormalize(s.velocity.x, s.velocity.y) : { x: 0, y: 0 };
+
+    // Hot radius: force-lock threshold
+    const hotDist = keySpacing * this.cfg.hotRadius;
 
     const scored = ordered.map((k, i) => {
-      const aimDist = hitX !== null
-        ? Math.abs(k.centerX - hitX)
-        : Math.abs(k.warpedX - px);
-      const normDist = aimDist / keySpacing;
-      const score = Math.exp(-normDist * normDist * 2.0);
-      const brightness = Math.max(0.12, score);
+      let score;
+
+      if (crossRow) {
+        // CROSS-ROW: ray projection from anchor through pointer to target row
+        let hitX;
+        if (Math.abs(ady) > 1) {
+          const targetRowY = ordered[0].centerY;
+          const t = (targetRowY - anchorKey.centerY) / ady;
+          hitX = anchorKey.centerX + adx * t;
+        } else {
+          hitX = px;
+        }
+        const aimDist = Math.abs(k.centerX - hitX);
+        const normDist = aimDist / keySpacing;
+        score = Math.exp(-normDist * normDist * 2.0);
+      } else {
+        // SAME-ROW: step-based indexing — swipe distance from anchor
+        // determines which key in sequence is active.
+        // Short swipe = 1st neighbor, longer = 2nd, etc.
+        // No need to physically reach the target key.
+        const swipeDist = Math.abs(adx);
+        const stepIndex = swipeDist / this.cfg.gridStepSize; // continuous step position
+        // Key 0 (1st neighbor) peaks at step 1, key 1 at step 2, etc.
+        const indexDist = Math.abs(stepIndex - (i + 1));
+        score = Math.exp(-indexDist * indexDist * 2.0);
+      }
+
+      // Hot radius: force-lock when pointer is very close to key center
+      // Only on cross-row — same-row uses step-based indexing instead
+      if (crossRow) {
+        const rawDist = dist(k.centerX, k.centerY, px, py);
+        if (rawDist < hotDist) {
+          score = 1.0;
+        }
+      }
+
+      // Momentum boost: keys in the direction of motion get a bump
+      if (mw > 0 && hasVel && s.momentum > 0.2) {
+        const toKey = vecNormalize(k.centerX - anchorKey.centerX, k.centerY - anchorKey.centerY);
+        const alignment = Math.max(0, vecDot(velNorm.x, velNorm.y, toKey.x, toKey.y));
+        score += mw * alignment * s.momentum;
+      }
+
+      const brightness = Math.max(0.12, Math.min(1.0, score));
       return {
         id: k.id,
         label: k.label,
-        dist: aimDist,
+        dist: Math.abs(k.centerX - anchorKey.centerX),
         score,
         brightness,
         order: i,
@@ -912,21 +977,54 @@ export class SteerPopEngine {
   }
 
   // ─────────────────────────────────────────────────────────
+  // PRIVATE — momentum computation
+  // ─────────────────────────────────────────────────────────
+
+  _updateMomentum() {
+    const s = this._state;
+    const buf = this._velocityBuffer;
+    if (buf.length < 4 || s.speed < 1) {
+      s.momentum = 0;
+      return;
+    }
+
+    // Direction stability: cosine similarity between recent and prior velocity
+    const n1 = buf[buf.length - 1];
+    const n2 = buf[buf.length - 2];
+    const n3 = buf[buf.length - 3];
+    const n4 = buf[buf.length - 4];
+
+    const dt1 = n1.t - n2.t;
+    const dt2 = n3.t - n4.t;
+    if (dt1 <= 0 || dt2 <= 0) { s.momentum = 0; return; }
+
+    const vx1 = (n1.x - n2.x) / dt1;
+    const vy1 = (n1.y - n2.y) / dt1;
+    const vx2 = (n3.x - n4.x) / dt2;
+    const vy2 = (n3.y - n4.y) / dt2;
+
+    const stability = cosineSimilarity(vx1, vy1, vx2, vy2);
+    // momentum = speed (normalized) * direction consistency
+    const normSpeed = Math.min(s.speed / 15, 1.0); // cap at 15
+    s.momentum = Math.max(0, normSpeed * stability);
+  }
+
+  // ─────────────────────────────────────────────────────────
   // PRIVATE — confidence computation
   // ─────────────────────────────────────────────────────────
 
   _computeConfidence(timestamp) {
     const s = this._state;
-    if (!s.topCandidate || s.candidates.length < 2) {
+    if (!s.topCandidate) {
       s.confidence = 0;
       s.confidenceZone = 'none';
       return;
     }
 
-    // Factor 1: Score gap between top and runner-up (0-1)
-    const top = s.candidates[0];
-    const second = s.candidates[1];
-    const scoreGap = Math.min((top.score - second.score) / 0.3, 1.0);
+    // Single candidate = no ambiguity = maximum score gap
+    const scoreGap = s.candidates.length < 2
+      ? 1.0
+      : Math.min((s.candidates[0].score - s.candidates[1].score) / 0.3, 1.0);
 
     // Factor 2: Dwell time — how long topCandidate has been stable (0-1 over 200ms)
     const dwell = Math.min((timestamp - s.topCandidateSince) / 200, 1.0);
@@ -950,8 +1048,7 @@ export class SteerPopEngine {
   _checkFlickUp(timestamp) {
     const s = this._state;
     if (s.flickState !== 'sliding') return;
-    if (!s.topCandidate) return;
-    if (s.confidence < 0.2) return; // too uncertain to commit
+    if (!s.topCandidate && !s.lockedTarget) return;
 
     const buf = this._velocityBuffer;
     // Need at least 5 samples
@@ -1038,6 +1135,54 @@ export class SteerPopEngine {
     this._commitRepeat(s.anchorKey, timestamp);
   }
 
+  // ─────────────────────────────────────────────────────────
+  // PRIVATE — horizontal snap detection (same-row commit)
+  // ─────────────────────────────────────────────────────────
+
+  _checkHorizontalSnap(timestamp) {
+    const s = this._state;
+    if (s.flickState !== 'sliding') return;
+    if (!s.topCandidate) return;
+
+    // Only applies on the same row as anchor
+    const anchorKey = this._keyById.get(s.anchorKey);
+    if (!anchorKey || s.activeRow !== anchorKey.row) return;
+
+    const buf = this._velocityBuffer;
+    if (buf.length < 5) return;
+
+    // Recent horizontal velocity (last 2 samples)
+    const r1 = buf[buf.length - 1];
+    const r2 = buf[buf.length - 2];
+    const r3 = buf[buf.length - 3];
+    const r4 = buf[buf.length - 4];
+    const dt1 = r1.t - r2.t;
+    const dt2 = r3.t - r4.t;
+    if (dt1 <= 0 || dt2 <= 0) return;
+
+    const recentVx = Math.abs((r1.x - r2.x) / dt1 * 16);
+    const recentVy = Math.abs((r1.y - r2.y) / dt1 * 16);
+    const priorVx = Math.abs((r3.x - r4.x) / dt2 * 16);
+
+    // Must be primarily horizontal (not vertical flick)
+    if (recentVy > recentVx * 0.8) return;
+
+    // Must exceed speed threshold
+    if (recentVx < this.cfg.snapSpeedThreshold) return;
+
+    // Must show acceleration: recent >> prior (slow→fast pattern)
+    // Prior must have been slow (below threshold) to avoid sustain false positives
+    if (priorVx > this.cfg.snapSpeedThreshold * 0.6) {
+      // Was already fast — only allow if clear acceleration
+      if (recentVx < priorVx * this.cfg.snapAccelRatio) return;
+    }
+
+    // Snap confirmed — commit locked target
+    const commitTarget = s.lockedTarget || s.topCandidate;
+    if (!commitTarget) return;
+    this._commitFlick(commitTarget, timestamp);
+  }
+
   _commitRepeat(keyId, timestamp) {
     const s = this._state;
     const key = this._keyById.get(keyId);
@@ -1063,9 +1208,10 @@ export class SteerPopEngine {
     s.swipeAngle   = null;
     s.swipeDirection = null;
 
-    // Enter cooldown
+    // Enter cooldown + linger
     s.flickState = 'cooldown';
     s.flickCooldownUntil = timestamp + this.cfg.flickCooldownMs;
+    s.lingerUntil = timestamp + this.cfg.lingerMs;
     this._velocityBuffer = [];
   }
 
@@ -1117,9 +1263,10 @@ export class SteerPopEngine {
       }
     }
 
-    // Enter cooldown
+    // Enter cooldown + linger
     s.flickState = 'cooldown';
     s.flickCooldownUntil = timestamp + this.cfg.flickCooldownMs;
+    s.lingerUntil = timestamp + this.cfg.lingerMs;
 
     // Reset velocity buffer to prevent double-flick
     this._velocityBuffer = [];
