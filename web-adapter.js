@@ -758,6 +758,9 @@ bindSlider('ctrl-repeatguard', 'lbl-repeatguard', 'repeatGuardFraction', null);
 bindSlider('ctrl-freqwt',     'lbl-freqwt',     'frequencyWeight',     null);
 bindSlider('ctrl-bigramwt',   'lbl-bigramwt',   'bigramWeight',        null);
 
+document.getElementById('tog-fixedanchor')?.addEventListener('change',   e => {
+  engine.setConfig({ fixedAnchor: e.target.checked });
+});
 document.getElementById('tog-railcar')?.addEventListener('change',      e => {
   engine.setConfig({ crossRowMode: e.target.checked ? 'railcar' : 'raytrace' });
 });

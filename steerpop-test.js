@@ -195,6 +195,7 @@ function runTests() {
       deadzoneRadius: 5,
       flickSpeedThreshold: 2,
       flickCooldownMs: 50,
+      fixedAnchor: false,  // test mobile anchor behavior
     });
     engine.setGeometry(geo);
     const h = keyCenter(geo, 'H');

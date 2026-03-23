@@ -43,6 +43,7 @@ const DEFAULT_CONFIG = Object.freeze({
   switchCooldownMs:     120,     // min ms between target switches
   repeatGuardFraction:  0.4,     // must move this × keySpacing before re-selecting same key
   // Cross-row selection mode
+  fixedAnchor:          true,      // true = anchor stays at original tap position, false = reanchor on each commit
   crossRowMode:         'railcar', // 'railcar' = step-based horizontal, 'raytrace' = angle-based ray projection
   // Language-weighted scoring
   frequencyWeight:      0.08,    // how much letter frequency boosts score (0 = off)
@@ -1443,10 +1444,15 @@ export class SteerPopEngine {
     s.gestureKeySequence.push(keyId);
     s.lastCommitPosition = { x: key.centerX, y: key.centerY };
 
-    // Reanchor on committed key
-    s.anchorKey      = keyId;
-    s.anchorPosition = { x: key.centerX, y: key.centerY };
-    s.activeRow      = key.row;
+    // Reanchor: fixed anchor keeps the original tap position, mobile anchor moves to committed key
+    if (!this.cfg.fixedAnchor) {
+      s.anchorKey      = keyId;
+      s.anchorPosition = { x: key.centerX, y: key.centerY };
+      s.activeRow      = key.row;
+    } else {
+      // Fixed anchor: stay at original tap position, reset to home row
+      s.activeRow = this._keyById.get(s.anchorKey)?.row ?? s.activeRow;
+    }
     s.swipeDirection = null;
     s.candidates     = [];
     s.topCandidate   = null;
