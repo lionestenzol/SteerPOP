@@ -505,6 +505,24 @@ function updateDebug(model) {
       zone === 'hot' ? 'd-accent' : zone === 'warm' ? 'd-armed' : 'd-muted'
     }`;
   }
+
+  // ── Score bars ──────────────────────────────────────────
+  const barsEl = document.getElementById('score-bars');
+  if (barsEl && model.candidates && model.candidates.length > 0) {
+    const maxScore = model.candidates[0].score || 1;
+    barsEl.innerHTML = model.candidates.slice(0, 6).map(c => {
+      const pct = (c.score / maxScore) * 100;
+      const isTop = c.isTop;
+      const color = isTop ? 'var(--commit-col)' : 'rgba(0,212,255,0.5)';
+      return `<div class="score-bar-row">
+        <span class="score-key-label${isTop ? ' top' : ''}">${c.label}</span>
+        <div class="score-bar-bg"><div class="score-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="score-num">${c.score.toFixed(2)}</span>
+      </div>`;
+    }).join('');
+  } else if (barsEl) {
+    barsEl.innerHTML = '';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -544,6 +562,33 @@ function render() {
   ctx.strokeStyle = 'rgba(0,212,255,0.3)';
   ctx.lineWidth = 0.8;
   ctx.stroke();
+
+  // ── Motion vector arrow ─────────────────────────────────
+  if (model.speed > 1 && model.velocity) {
+    const vLen = Math.hypot(model.velocity.x, model.velocity.y);
+    if (vLen > 0.01) {
+      const nx = model.velocity.x / vLen;
+      const ny = model.velocity.y / vLen;
+      const arrowLen = Math.min(model.speed * 3, 40);
+      const endX = pc.cx + nx * arrowLen;
+      const endY = pc.cy + ny * arrowLen;
+      ctx.beginPath();
+      ctx.moveTo(pc.cx, pc.cy);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = 'rgba(0,212,255,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Arrowhead
+      const headLen = 6;
+      const angle = Math.atan2(ny, nx);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.stroke();
+    }
+  }
 
   // ── Swipe direction indicator (cone) ────────────────────
   const dv = model.debugValues;
@@ -661,10 +706,23 @@ function render() {
   ctx.fillStyle = 'rgba(0,212,255,0.8)';
   ctx.fill();
 
-  // ── Cursor dot ──────────────────────────────────────────
+  // ── Cursor dot (with snap pull at high confidence) ──────
+  let cursorX = pc.cx, cursorY = pc.cy;
+  if (model.confidence > 0.7 && model.topCandidate) {
+    const topKey = keyEls[model.topCandidate.id];
+    if (topKey) {
+      const rect = topKey.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const tkx = (rect.left + rect.width / 2 - canvasRect.left) * (canvas.width / canvasRect.width);
+      const tky = (rect.top + rect.height / 2 - canvasRect.top) * (canvas.height / canvasRect.height);
+      const snapT = (model.confidence - 0.7) / 0.3;
+      cursorX = pc.cx + (tkx - pc.cx) * snapT * 0.2;
+      cursorY = pc.cy + (tky - pc.cy) * snapT * 0.2;
+    }
+  }
   ctx.beginPath();
-  ctx.arc(pc.cx, pc.cy, 3.5, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,212,255,0.6)';
+  ctx.arc(cursorX, cursorY, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = model.confidence > 0.7 ? 'rgba(0,255,170,0.7)' : 'rgba(0,212,255,0.6)';
   ctx.fill();
 
   requestAnimationFrame(render);
@@ -691,7 +749,18 @@ bindSlider('ctrl-warp',       'lbl-warp',       'warpStrength',        null);
 bindSlider('ctrl-deadzone',   'lbl-deadzone',   'deadzoneRadius',      null,         parseInt);
 bindSlider('ctrl-flickspeed', 'lbl-flickspeed', 'flickSpeedThreshold', null,         parseInt);
 bindSlider('ctrl-finger',    'lbl-finger',    null,                  'fingerRadius', parseInt);
+bindSlider('ctrl-samerow',     'lbl-samerow',     'sameRowHysteresis',   null);
+bindSlider('ctrl-speedgate',   'lbl-speedgate',   'stickySpeedGate',     null);
+bindSlider('ctrl-exitfrac',    'lbl-exitfrac',    'stickyExitFraction',  null);
+bindSlider('ctrl-dirgate',     'lbl-dirgate',     'stickyDirectionGate', null);
+bindSlider('ctrl-switchcool',  'lbl-switchcool',  'switchCooldownMs',    null, parseInt);
+bindSlider('ctrl-repeatguard', 'lbl-repeatguard', 'repeatGuardFraction', null);
+bindSlider('ctrl-freqwt',     'lbl-freqwt',     'frequencyWeight',     null);
+bindSlider('ctrl-bigramwt',   'lbl-bigramwt',   'bigramWeight',        null);
 
+document.getElementById('tog-railcar')?.addEventListener('change',      e => {
+  engine.setConfig({ crossRowMode: e.target.checked ? 'railcar' : 'raytrace' });
+});
 document.getElementById('tog-halo')?.addEventListener('change',         e => ui.showTopBubble  = e.target.checked);
 document.getElementById('tog-highlights')?.addEventListener('change',   e => ui.showHighlights = e.target.checked);
 document.getElementById('tog-suggest')?.addEventListener('change',      e => ui.showSuggest    = e.target.checked);

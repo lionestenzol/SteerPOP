@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ouija QWERTY — Parameter Tuning Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --surface: #111116;
+    --surface2: #18181f;
+    --border: #2a2a38;
+    --border-glow: #3d3d5c;
+    --amber: #e8a135;
+    --amber-dim: #8a5e1e;
+    --amber-bright: #ffc85a;
+    --ghost: #7b7b9e;
+    --ghost-dim: #3a3a55;
+    --red: #e84040;
+    --green: #3de87a;
+    --blue: #4090e8;
+    --text: #d4d4e8;
+    --text-dim: #6a6a88;
+    --snap-color: #c060ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.4;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    background: linear-gradient(180deg, #14141c 0%, var(--bg) 100%);
+  }
+
+  header h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    letter-spacing: 3px;
+    color: var(--amber);
+    text-shadow: 0 0 20px var(--amber-dim);
+  }
+
+  header .subtitle {
+    color: var(--ghost);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  header .status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--green);
+    letter-spacing: 1px;
+  }
+
+  header .status::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 65px);
+  }
+
+  /* LEFT PANEL — Parameters */
+  .param-panel {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .section-label {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 15px;
+    letter-spacing: 3px;
+    color: var(--ghost);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    margin-bottom: 4px;
+  }
+
+  .param-group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .param-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .param-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .param-name {
+    font-family: 'Courier Prime', monospace;
+    font-size: 12px;
+    color: var(--amber);
+    font-style: italic;
+  }
+
+  .param-val {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    color: var(--amber-bright);
+    min-width: 48px;
+    text-align: right;
+    letter-spacing: 1px;
+  }
+
+  .param-desc {
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    letter-spacing: 0.3px;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--ghost-dim);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    position: relative;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 8px var(--amber-dim);
+    cursor: pointer;
+    transition: box-shadow 0.2s;
+  }
+
+  input[type=range]:hover::-webkit-slider-thumb {
+    box-shadow: 0 0 14px var(--amber);
+  }
+
+  .range-track-container {
+    position: relative;
+  }
+
+  .range-fill {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 3px;
+    background: var(--amber-dim);
+    border-radius: 2px;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  /* CENTER — Keyboard Sim */
+  .sim-panel {
+    border-bottom: 1px solid var(--border);
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: radial-gradient(ellipse at 50% 0%, #15151e 0%, var(--bg) 70%);
+  }
+
+  .sim-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .sim-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 15px;
+    letter-spacing: 3px;
+    color: var(--ghost);
+  }
+
+  .sim-controls {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 2px;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+
+  .btn:hover {
+    border-color: var(--amber-dim);
+    color: var(--amber);
+  }
+
+  .btn.active {
+    background: var(--amber-dim);
+    border-color: var(--amber);
+    color: var(--amber-bright);
+  }
+
+  #keyboard-canvas {
+    width: 100%;
+    height: 200px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: crosshair;
+    background: var(--surface);
+    display: block;
+  }
+
+  .committed-text {
+    font-family: 'Courier Prime', monospace;
+    font-size: 16px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    padding: 10px 14px;
+    min-height: 42px;
+    letter-spacing: 1px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cursor-blink {
+    width: 2px; height: 18px;
+    background: var(--amber);
+    animation: blink 1s step-end infinite;
+    display: inline-block;
+    vertical-align: middle;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; } 50% { opacity: 0; }
+  }
+
+  /* BOTTOM — Score Readout */
+  .score-panel {
+    padding: 16px 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .score-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+  }
+
+  .score-block-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--ghost);
+    margin-bottom: 10px;
+  }
+
+  .score-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .score-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .score-key-label {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 14px;
+    color: var(--amber);
+    width: 16px;
+    text-align: center;
+  }
+
+  .score-bar-bg {
+    flex: 1;
+    height: 6px;
+    background: var(--ghost-dim);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .score-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.1s ease-out;
+  }
+
+  .score-num {
+    font-size: 10px;
+    color: var(--text-dim);
+    width: 32px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .metric {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 10px;
+  }
+
+  .metric-label {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 3px;
+  }
+
+  .metric-val {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 20px;
+    letter-spacing: 1px;
+  }
+
+  .metric-val.active { color: var(--amber-bright); text-shadow: 0 0 10px var(--amber-dim); }
+  .metric-val.confident { color: var(--green); }
+  .metric-val.dead { color: var(--ghost); }
+  .metric-val.snap { color: var(--snap-color); text-shadow: 0 0 10px rgba(192,96,255,0.4); }
+
+  /* Confidence arc */
+  .conf-arc-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 4px;
+  }
+
+  .conf-arc-container svg {
+    overflow: visible;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ouija QWERTY</h1>
+  <span class="subtitle">Planchette Input · Parameter Tuning Dashboard</span>
+  <div class="status">ENGINE LIVE</div>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT: Parameter Controls -->
+  <aside class="param-panel">
+
+    <div class="section-label">Weights</div>
+    <div class="param-group">
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">w_prox</span>
+          <span class="param-val" id="val-wprox">0.60</span>
+        </div>
+        <span class="param-desc">Proximity weight — how much cursor distance to key center matters</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-wprox"></div>
+          <input type="range" id="wprox" min="0" max="1" step="0.01" value="0.6">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">w_dir</span>
+          <span class="param-val" id="val-wdir">0.30</span>
+        </div>
+        <span class="param-desc">Directional alignment weight — dot product of motion vector with key direction</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-wdir"></div>
+          <input type="range" id="wdir" min="0" max="1" step="0.01" value="0.3">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">w_hist</span>
+          <span class="param-val" id="val-whist">0.10</span>
+        </div>
+        <span class="param-desc">History bias weight — persistence bonus for the previously active key</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-whist"></div>
+          <input type="range" id="whist" min="0" max="1" step="0.01" value="0.1">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">w_row</span>
+          <span class="param-val" id="val-wrow">0.20</span>
+        </div>
+        <span class="param-desc">Row bias weight — vertical motion preference for upper/lower rows</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-wrow"></div>
+          <input type="range" id="wrow" min="0" max="0.5" step="0.01" value="0.2">
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Hysteresis</div>
+    <div class="param-group">
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">S  (stickiness boost)</span>
+          <span class="param-val" id="val-S">0.30</span>
+        </div>
+        <span class="param-desc">Score bonus added to the currently active key to prevent flickering</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-S"></div>
+          <input type="range" id="S" min="0" max="0.8" step="0.01" value="0.3">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">Δ  (switch threshold)</span>
+          <span class="param-val" id="val-delta">0.20</span>
+        </div>
+        <span class="param-desc">Candidate must exceed active key score by this margin to trigger a switch</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-delta"></div>
+          <input type="range" id="delta" min="0" max="0.6" step="0.01" value="0.2">
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Geometry</div>
+    <div class="param-group">
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">R  (planchette radius px)</span>
+          <span class="param-val" id="val-R">55</span>
+        </div>
+        <span class="param-desc">Cursor zone radius — keys within this circle are scored (8–12 mm physical)</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-R"></div>
+          <input type="range" id="R" min="20" max="100" step="1" value="55">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">C_min  (dead zone floor)</span>
+          <span class="param-val" id="val-cmin">0.40</span>
+        </div>
+        <span class="param-desc">Confidence below this → no key selected, cursor enters cold/dead zone state</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-cmin"></div>
+          <input type="range" id="cmin" min="0.1" max="0.8" step="0.01" value="0.4">
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Timing</div>
+    <div class="param-group">
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">t_dwell  (ms)</span>
+          <span class="param-val" id="val-dwell">300</span>
+        </div>
+        <span class="param-desc">Milliseconds finger must dwell on key to trigger commit</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-dwell"></div>
+          <input type="range" id="dwell" min="80" max="800" step="10" value="300">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">T_cooldown  (ms)</span>
+          <span class="param-val" id="val-cooldown">150</span>
+        </div>
+        <span class="param-desc">Repeat gate — same key cannot fire again within this window after a commit</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-cooldown"></div>
+          <input type="range" id="cooldown" min="50" max="500" step="10" value="150">
+        </div>
+      </div>
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">τ  (history decay ms)</span>
+          <span class="param-val" id="val-tau">200</span>
+        </div>
+        <span class="param-desc">Exponential decay time constant for history bias (bias_k = exp(-t/τ))</span>
+        <div class="range-track-container">
+          <div class="range-fill" id="fill-tau"></div>
+          <input type="range" id="tau" min="50" max="600" step="10" value="200">
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- TOP RIGHT: Keyboard Simulator -->
+  <main class="sim-panel">
+    <div class="sim-header">
+      <span class="sim-title">Live Simulation · Move cursor over keys</span>
+      <div class="sim-controls">
+        <button class="btn" id="btn-dwell-mode">DWELL MODE</button>
+        <button class="btn" id="btn-clear">CLEAR</button>
+      </div>
+    </div>
+    <canvas id="keyboard-canvas"></canvas>
+    <div class="committed-text" id="committed-text">
+      <span id="text-output"></span><span class="cursor-blink"></span>
+    </div>
+  </main>
+
+  <!-- BOTTOM RIGHT: Score Readout -->
+  <section class="score-panel">
+    <div class="score-block">
+      <div class="score-block-title">Top Key Scores</div>
+      <div class="score-bars" id="score-bars"></div>
+    </div>
+    <div class="score-block">
+      <div class="score-block-title">Engine State</div>
+      <div class="metrics-grid">
+        <div class="metric">
+          <div class="metric-label">Active Key</div>
+          <div class="metric-val active" id="m-activekey">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Confidence</div>
+          <div class="metric-val confident" id="m-conf">0.00</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">State</div>
+          <div class="metric-val dead" id="m-state">COLD</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Dwell</div>
+          <div class="metric-val snap" id="m-dwell">—</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const ROWS = [
+  ['Q','W','E','R','T','Y','U','I','O','P'],
+  ['A','S','D','F','G','H','J','K','L'],
+  ['Z','X','C','V','B','N','M']
+];
+
+const canvas = document.getElementById('keyboard-canvas');
+const ctx = canvas.getContext('2d');
+
+let keys = [];
+let cursor = null;
+let motionVec = { x: 0, y: 0 };
+let prevPos = null;
+let activeKey = null;
+let confidence = 0;
+let committedText = '';
+let dwellStart = null;
+let lastCommitKey = null;
+let lastCommitTime = 0;
+let historyKey = null;
+let historyTime = 0;
+let isDwellMode = true;
+let animFrame;
+let flashes = [];
+
+// Params
+let P = {
+  wprox: 0.6, wdir: 0.3, whist: 0.1, wrow: 0.2,
+  S: 0.3, delta: 0.2, R: 55, cmin: 0.4,
+  dwell: 300, cooldown: 150, tau: 200
+};
+
+function buildKeys() {
+  const W = canvas.offsetWidth;
+  const H = canvas.offsetHeight;
+  const rowOffsets = [0.08, 0.08, 0.14];
+  const rowH = H / 3.5;
+  keys = [];
+  ROWS.forEach((row, ri) => {
+    const keyW = W / (row.length + 1);
+    const yc = rowH * (ri + 0.8);
+    row.forEach((ch, ci) => {
+      const xc = (ci + 0.5 + rowOffsets[ri]) * keyW + keyW * 0.5;
+      keys.push({ id: ch, x: xc, y: yc, row: ri });
+    });
+  });
+}
+
+function resize() {
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  buildKeys();
+}
+
+function scoreKey(k, mx, my) {
+  const dx = mx - k.x, dy = my - k.y;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  if (d > P.R) return 0;
+
+  const prox = 1 - d / P.R;
+
+  const mvLen = Math.sqrt(motionVec.x*motionVec.x + motionVec.y*motionVec.y);
+  let dir = 0;
+  if (mvLen > 0.001) {
+    const ux = dx / (d || 1), uy = dy / (d || 1);
+    dir = (motionVec.x / mvLen) * ux + (motionVec.y / mvLen) * uy;
+    dir = (dir + 1) / 2; // normalize to [0,1]
+  }
+
+  const t = performance.now() - historyTime;
+  const hist = (historyKey === k.id) ? Math.exp(-t / P.tau) : 0;
+
+  // Row bias
+  const vy = motionVec.y;
+  let rowBias = 0;
+  if (Math.abs(vy) > 0.3) {
+    const sign = vy > 0 ? 1 : -1;
+    const alignment = sign > 0 ? (k.row === 2 ? 1 : k.row === 1 ? 0.5 : 0)
+                               : (k.row === 0 ? 1 : k.row === 1 ? 0.5 : 0);
+    rowBias = P.wrow * alignment;
+  }
+
+  let score = P.wprox * prox + P.wdir * dir + P.whist * hist + rowBias;
+
+  // Stickiness
+  if (activeKey && k.id === activeKey.id) score += P.S;
+
+  return Math.min(score, 2.0);
+}
+
+function computeScores(mx, my) {
+  return keys.map(k => ({ key: k, score: scoreKey(k, mx, my) }))
+    .sort((a, b) => b.score - a.score);
+}
+
+function update(mx, my) {
+  const scores = computeScores(mx, my);
+  const best = scores[0];
+  const rawBest = best.score - (activeKey && best.key.id === activeKey.id ? P.S : 0);
+
+  confidence = rawBest / (P.wprox + P.wdir + P.whist + P.wrow + P.S) * 0.8;
+  confidence = Math.min(1, confidence);
+
+  if (best.score > P.cmin) {
+    if (!activeKey || best.key.id !== activeKey.id) {
+      const activeScore = activeKey ? scores.find(s => s.key.id === activeKey.id)?.score || 0 : 0;
+      if (best.score > activeScore + P.delta) {
+        historyKey = activeKey?.id || null;
+        historyTime = performance.now();
+        activeKey = best.key;
+        dwellStart = performance.now();
+      }
+    }
+  } else {
+    activeKey = null;
+    dwellStart = null;
+  }
+
+  // Dwell commit
+  if (isDwellMode && activeKey && dwellStart) {
+    const elapsed = performance.now() - dwellStart;
+    const now = performance.now();
+    const cooldownOk = !(lastCommitKey === activeKey.id && (now - lastCommitTime) < P.cooldown);
+    if (elapsed > P.dwell && cooldownOk) {
+      commit(activeKey.id);
+      dwellStart = performance.now();
+    }
+  }
+
+  return scores;
+}
+
+function commit(ch) {
+  committedText += ch;
+  document.getElementById('text-output').textContent = committedText;
+  lastCommitKey = ch;
+  lastCommitTime = performance.now();
+  flashes.push({ key: ch, time: performance.now() });
+}
+
+function draw(mx, my, scores) {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // bg
+  ctx.fillStyle = '#111116';
+  ctx.fillRect(0, 0, W, H);
+
+  const now = performance.now();
+  flashes = flashes.filter(f => now - f.time < 300);
+
+  // Draw keys
+  keys.forEach(k => {
+    const score = scores?.find(s => s.key.id === k.id)?.score || 0;
+    const isActive = activeKey?.id === k.id;
+    const flash = flashes.find(f => f.key === k.id);
+    const flashT = flash ? (now - flash.time) / 300 : 1;
+    const flashAlpha = flash ? 1 - flashT : 0;
+
+    const kw = 28, kh = 26;
+
+    // Key bg
+    ctx.beginPath();
+    ctx.roundRect(k.x - kw/2, k.y - kh/2, kw, kh, 3);
+
+    if (isActive) {
+      ctx.fillStyle = `rgba(232,161,53,0.18)`;
+    } else if (score > 0.05) {
+      ctx.fillStyle = `rgba(60,60,80,${0.3 + score * 0.4})`;
+    } else {
+      ctx.fillStyle = 'rgba(24,24,30,0.9)';
+    }
+    ctx.fill();
+
+    // Key border
+    if (isActive) {
+      ctx.strokeStyle = `rgba(232,161,53,${0.6 + flashAlpha * 0.4})`;
+      ctx.lineWidth = 1.5;
+    } else if (score > 0.1) {
+      ctx.strokeStyle = `rgba(100,90,60,${score * 0.6})`;
+      ctx.lineWidth = 1;
+    } else {
+      ctx.strokeStyle = 'rgba(40,40,56,0.8)';
+      ctx.lineWidth = 1;
+    }
+    ctx.stroke();
+
+    // Flash glow
+    if (flash) {
+      ctx.beginPath();
+      ctx.roundRect(k.x - kw/2, k.y - kh/2, kw, kh, 3);
+      ctx.fillStyle = `rgba(232,161,53,${flashAlpha * 0.35})`;
+      ctx.fill();
+    }
+
+    // Score bar (bottom of key)
+    if (score > 0.05 && mx !== null) {
+      const barW = (kw - 6) * Math.min(score / 1.5, 1);
+      ctx.fillStyle = isActive ? `rgba(232,161,53,0.7)` : `rgba(100,100,160,0.5)`;
+      ctx.fillRect(k.x - kw/2 + 3, k.y + kh/2 - 4, barW, 2);
+    }
+
+    // Label
+    ctx.font = isActive ? 'bold 12px "Space Mono"' : '11px "Space Mono"';
+    ctx.fillStyle = isActive ? '#ffc85a' : (score > 0.1 ? '#a0a0c0' : '#4a4a68');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(k.id, k.x, k.y - 1);
+  });
+
+  // Draw cursor
+  if (mx !== null) {
+    const conf = confidence;
+    const isSnap = conf > 0.75;
+    const isDead = conf < P.cmin / 2;
+
+    // Snap visual: slightly pull cursor toward active key
+    let drawX = mx, drawY = my;
+    if (isSnap && activeKey) {
+      const snapT = (conf - 0.75) / 0.25;
+      drawX = mx + (activeKey.x - mx) * snapT * 0.25;
+      drawY = my + (activeKey.y - my) * snapT * 0.25;
+    }
+
+    // Outer ring
+    const ringColor = isDead ? 'rgba(80,80,100,0.3)' : isSnap ? 'rgba(192,96,255,0.25)' : 'rgba(232,161,53,0.15)';
+    ctx.beginPath();
+    ctx.arc(drawX, drawY, P.R, 0, Math.PI * 2);
+    ctx.strokeStyle = isDead ? 'rgba(80,80,100,0.3)' : isSnap ? 'rgba(192,96,255,0.5)' : `rgba(232,161,53,${0.2 + conf * 0.3})`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(isDead ? [4,4] : []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Inner dot
+    ctx.beginPath();
+    ctx.arc(drawX, drawY, 5, 0, Math.PI * 2);
+    const dotColor = isDead ? '#4a4a68' : isSnap ? '#c060ff' : '#e8a135';
+    ctx.fillStyle = dotColor;
+    ctx.shadowColor = dotColor;
+    ctx.shadowBlur = isDead ? 0 : 10;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Dwell ring
+    if (isDwellMode && activeKey && dwellStart) {
+      const progress = Math.min((now - dwellStart) / P.dwell, 1);
+      ctx.beginPath();
+      ctx.arc(activeKey.x, activeKey.y, 18, -Math.PI/2, -Math.PI/2 + progress * Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,200,90,${0.4 + progress * 0.5})`;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
+    // Motion vector viz
+    const mvLen = Math.sqrt(motionVec.x*motionVec.x + motionVec.y*motionVec.y);
+    if (mvLen > 1) {
+      const scale = Math.min(mvLen, 30);
+      ctx.beginPath();
+      ctx.moveTo(drawX, drawY);
+      ctx.lineTo(drawX + (motionVec.x / mvLen) * scale, drawY + (motionVec.y / mvLen) * scale);
+      ctx.strokeStyle = 'rgba(232,161,53,0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+}
+
+function updateMetrics(scores) {
+  document.getElementById('m-activekey').textContent = activeKey?.id || '—';
+  document.getElementById('m-conf').textContent = confidence.toFixed(2);
+  
+  const stateEl = document.getElementById('m-state');
+  if (!activeKey) {
+    stateEl.textContent = 'COLD'; stateEl.className = 'metric-val dead';
+  } else if (confidence > 0.75) {
+    stateEl.textContent = 'SNAP'; stateEl.className = 'metric-val snap';
+  } else {
+    stateEl.textContent = 'LIVE'; stateEl.className = 'metric-val confident';
+  }
+
+  // Dwell meter
+  const dwellEl = document.getElementById('m-dwell');
+  if (isDwellMode && activeKey && dwellStart) {
+    const pct = Math.min(((performance.now() - dwellStart) / P.dwell) * 100, 100);
+    dwellEl.textContent = Math.round(pct) + '%';
+    dwellEl.className = 'metric-val snap';
+  } else {
+    dwellEl.textContent = '—';
+    dwellEl.className = 'metric-val dead';
+  }
+
+  // Score bars
+  const top5 = (scores || []).slice(0, 6).filter(s => s.score > 0.01);
+  const maxScore = top5[0]?.score || 1;
+  const barsEl = document.getElementById('score-bars');
+  barsEl.innerHTML = top5.map(s => {
+    const pct = (s.score / Math.max(maxScore, 1)) * 100;
+    const isAct = activeKey?.id === s.key.id;
+    const color = isAct ? '#e8a135' : s.score > 0.5 ? '#6080d0' : '#404060';
+    return `<div class="score-bar-row">
+      <span class="score-key-label" style="color:${isAct ? '#ffc85a' : '#7b7b9e'}">${s.key.id}</span>
+      <div class="score-bar-bg"><div class="score-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <span class="score-num">${s.score.toFixed(2)}</span>
+    </div>`;
+  }).join('');
+}
+
+let lastScores = [];
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  if (prevPos) {
+    const alpha = 0.4;
+    motionVec.x = motionVec.x * (1-alpha) + (mx - prevPos.x) * alpha;
+    motionVec.y = motionVec.y * (1-alpha) + (my - prevPos.y) * alpha;
+  }
+  prevPos = { x: mx, y: my };
+
+  lastScores = update(mx, my);
+  draw(mx, my, lastScores);
+  updateMetrics(lastScores);
+});
+
+canvas.addEventListener('mouseleave', () => {
+  prevPos = null; motionVec = { x: 0, y: 0 }; activeKey = null;
+  confidence = 0; cursor = null;
+  draw(null, null, []);
+  updateMetrics([]);
+});
+
+// Dwell mode toggle
+document.getElementById('btn-dwell-mode').addEventListener('click', function() {
+  isDwellMode = !isDwellMode;
+  this.classList.toggle('active', isDwellMode);
+  this.textContent = isDwellMode ? 'DWELL MODE' : 'MANUAL MODE';
+});
+document.getElementById('btn-dwell-mode').classList.add('active');
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  committedText = '';
+  document.getElementById('text-output').textContent = '';
+});
+
+// Wire up sliders
+function wireSlider(id, paramKey, displayId, decimals = 2, multiplier = 1) {
+  const el = document.getElementById(id);
+  const val = document.getElementById(displayId);
+  const fill = document.getElementById('fill-' + id);
+
+  function update() {
+    const v = parseFloat(el.value);
+    P[paramKey] = v * multiplier;
+    val.textContent = decimals === 0 ? Math.round(v * multiplier) : v.toFixed(decimals);
+    const pct = ((v - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min))) * 100;
+    fill.style.width = pct + '%';
+  }
+  el.addEventListener('input', update);
+  update();
+}
+
+wireSlider('wprox', 'wprox', 'val-wprox');
+wireSlider('wdir', 'wdir', 'val-wdir');
+wireSlider('whist', 'whist', 'val-whist');
+wireSlider('wrow', 'wrow', 'val-wrow');
+wireSlider('S', 'S', 'val-S');
+wireSlider('delta', 'delta', 'val-delta');
+wireSlider('R', 'R', 'val-R', 0);
+wireSlider('cmin', 'cmin', 'val-cmin');
+wireSlider('dwell', 'dwell', 'val-dwell', 0);
+wireSlider('cooldown', 'cooldown', 'val-cooldown', 0);
+wireSlider('tau', 'tau', 'val-tau', 0);
+
+// Init fills
+document.querySelectorAll('input[type=range]').forEach(el => {
+  const pct = ((parseFloat(el.value) - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min))) * 100;
+  const fill = document.getElementById('fill-' + el.id);
+  if (fill) fill.style.width = pct + '%';
+});
+
+window.addEventListener('resize', () => { resize(); draw(null, null, []); });
+resize();
+draw(null, null, []);
+updateMetrics([]);
+</script>
+</body>
+</html>

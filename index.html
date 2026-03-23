@@ -230,6 +230,25 @@ input[type=range]::-webkit-slider-thumb {
 .d-muted   { color: var(--muted); }
 .d-suggest { color: var(--suggest-col); }
 
+/* Score bars */
+.score-bars { display: flex; flex-direction: column; gap: 4px; }
+.score-bar-row { display: flex; align-items: center; gap: 6px; }
+.score-key-label {
+  font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700;
+  width: 16px; text-align: center; color: var(--accent);
+}
+.score-key-label.top { color: var(--commit-col); }
+.score-bar-bg {
+  flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+}
+.score-bar-fill {
+  height: 100%; border-radius: 3px; transition: width 0.08s ease-out;
+}
+.score-num {
+  font-family: var(--font-mono); font-size: 0.6rem; color: var(--muted);
+  width: 36px; text-align: right; font-variant-numeric: tabular-nums;
+}
+
 /* Event log */
 .event-log {
   max-height: 120px; overflow-y: auto; font-family: var(--font-mono);
@@ -345,7 +364,48 @@ input[type=range]::-webkit-slider-thumb {
           <input type="range" id="ctrl-finger" min="10" max="40" value="22" />
         </div>
       </div>
+      <div class="panel-title" style="margin-top:10px; font-size:0.65rem;">Sticky Key</div>
+      <div class="ctrl-row">
+        <div class="ctrl-item">
+          <label>Same-Row Hysteresis <span id="lbl-samerow">0.15</span></label>
+          <input type="range" id="ctrl-samerow" min="0" max="0.5" step="0.01" value="0.15" />
+        </div>
+        <div class="ctrl-item">
+          <label>Speed Gate <span id="lbl-speedgate">3</span> <span style="font-size:0.5rem;color:var(--muted)">(cross-row)</span></label>
+          <input type="range" id="ctrl-speedgate" min="0" max="10" step="0.5" value="3" />
+        </div>
+        <div class="ctrl-item">
+          <label>Exit Fraction <span id="lbl-exitfrac">0.6</span></label>
+          <input type="range" id="ctrl-exitfrac" min="0" max="1" step="0.05" value="0.6" />
+        </div>
+        <div class="ctrl-item">
+          <label>Direction Gate <span id="lbl-dirgate">0.3</span></label>
+          <input type="range" id="ctrl-dirgate" min="0" max="1" step="0.05" value="0.3" />
+        </div>
+        <div class="ctrl-item">
+          <label>Switch Cooldown <span id="lbl-switchcool">120</span>ms</label>
+          <input type="range" id="ctrl-switchcool" min="0" max="300" step="10" value="120" />
+        </div>
+        <div class="ctrl-item">
+          <label>Repeat Guard <span id="lbl-repeatguard">0.4</span></label>
+          <input type="range" id="ctrl-repeatguard" min="0" max="1" step="0.05" value="0.4" />
+        </div>
+      </div>
+      <div class="panel-title" style="margin-top:10px; font-size:0.65rem;">Language</div>
+      <div class="ctrl-row">
+        <div class="ctrl-item">
+          <label>Frequency Wt <span id="lbl-freqwt">0.08</span></label>
+          <input type="range" id="ctrl-freqwt" min="0" max="0.3" step="0.01" value="0.08" />
+        </div>
+        <div class="ctrl-item">
+          <label>Bigram Wt <span id="lbl-bigramwt">0.12</span></label>
+          <input type="range" id="ctrl-bigramwt" min="0" max="0.3" step="0.01" value="0.12" />
+        </div>
+      </div>
       <div class="toggle-row">
+        <div class="toggle-item">Rail Car Mode
+          <label class="switch"><input type="checkbox" id="tog-railcar" checked /><span class="slider-sw"></span></label>
+        </div>
         <div class="toggle-item">Show Top Bubble
           <label class="switch"><input type="checkbox" id="tog-halo" checked /><span class="slider-sw"></span></label>
         </div>
@@ -414,6 +474,11 @@ input[type=range]::-webkit-slider-thumb {
         </div>
       </div>
       <div class="event-log" id="event-log"></div>
+    </div>
+
+    <div class="panel-card">
+      <div class="panel-title">Candidate Scores</div>
+      <div id="score-bars" class="score-bars"></div>
     </div>
 
     <div class="panel-card" style="font-size:0.68rem; color:var(--muted); line-height:1.8; letter-spacing:0.03em;">

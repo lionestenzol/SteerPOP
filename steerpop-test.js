@@ -1195,9 +1195,9 @@ function runTests() {
   }
 
   // ── 39. Angle-based aiming — short push selects correct key ──
-  section('39. Angle-based aiming — short push selects correct key');
+  section('39. Angle-based aiming — short push selects correct key (raytrace mode)');
   {
-    const engine = new SteerPopEngine({ gridStepSize: 30, deadzoneRadius: 8 });
+    const engine = new SteerPopEngine({ gridStepSize: 30, deadzoneRadius: 8, crossRowMode: 'raytrace' });
     engine.setGeometry(geo);
 
     const W = keyCenter(geo, 'W');

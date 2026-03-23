@@ -35,6 +35,18 @@ const DEFAULT_CONFIG = Object.freeze({
   lingerMs:             80,      // ms to freeze candidates after a commit (post-commit stability)
   snapSpeedThreshold:   10,      // min horizontal speed for snap commit (same-row)
   snapAccelRatio:       2.0,     // recent speed must be this × prior speed (slow→fast detection)
+  // Sticky key behavior
+  sameRowHysteresis:    0.15,    // same-row: score margin to switch (only gate for same-row)
+  stickySpeedGate:      3,       // cross-row: below this speed, no target switching
+  stickyExitFraction:   0.6,     // cross-row: must travel this × keySpacing AWAY from current key to switch
+  stickyDirectionGate:  0.3,     // velocity must point toward new key (cosine similarity threshold)
+  switchCooldownMs:     120,     // min ms between target switches
+  repeatGuardFraction:  0.4,     // must move this × keySpacing before re-selecting same key
+  // Cross-row selection mode
+  crossRowMode:         'railcar', // 'railcar' = step-based horizontal, 'raytrace' = angle-based ray projection
+  // Language-weighted scoring
+  frequencyWeight:      0.08,    // how much letter frequency boosts score (0 = off)
+  bigramWeight:         0.12,    // how much bigram prediction boosts score (0 = off)
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -51,6 +63,60 @@ const SUGGESTION_MAP = {
   ON: 'one',   WH: 'what',  MY: 'my',
   LO: 'love',  ME: 'me',    US: 'use',
 };
+
+// ─────────────────────────────────────────────────────────────
+// LETTER FREQUENCY (English, normalized 0–1 with E = 1.0)
+// ─────────────────────────────────────────────────────────────
+
+const LETTER_FREQ = {
+  E:1.00, T:0.70, A:0.63, O:0.58, I:0.54, N:0.52,
+  S:0.49, H:0.47, R:0.46, D:0.33, L:0.31, C:0.21,
+  U:0.21, M:0.19, W:0.18, F:0.17, G:0.16, Y:0.15,
+  P:0.15, B:0.11, V:0.08, K:0.06, J:0.01, X:0.01,
+  Q:0.01, Z:0.01,
+};
+
+// ─────────────────────────────────────────────────────────────
+// BIGRAM FOLLOWERS (after letter X, top 5 most likely next letters)
+// ─────────────────────────────────────────────────────────────
+
+const BIGRAM_NEXT = {
+  A: {N:0.30, L:0.18, T:0.15, R:0.12, S:0.10},
+  B: {E:0.35, U:0.20, L:0.15, O:0.12, A:0.08},
+  C: {O:0.30, H:0.25, A:0.15, E:0.12, K:0.10},
+  D: {E:0.30, I:0.20, O:0.15, A:0.12, S:0.08},
+  E: {R:0.25, S:0.20, D:0.15, N:0.12, A:0.10},
+  F: {O:0.35, I:0.20, R:0.15, A:0.12, U:0.08},
+  G: {H:0.25, E:0.20, O:0.18, R:0.12, A:0.10},
+  H: {E:0.50, A:0.18, I:0.15, O:0.10, U:0.07},
+  I: {N:0.30, S:0.20, T:0.18, O:0.12, C:0.08},
+  J: {U:0.40, O:0.25, A:0.15, E:0.10, I:0.05},
+  K: {E:0.35, I:0.20, N:0.15, S:0.12, A:0.08},
+  L: {E:0.30, L:0.18, I:0.15, A:0.12, O:0.10},
+  M: {E:0.30, A:0.20, I:0.15, O:0.12, U:0.08},
+  N: {G:0.25, D:0.20, E:0.18, T:0.12, O:0.10},
+  O: {N:0.25, F:0.20, R:0.18, U:0.12, T:0.10},
+  P: {R:0.30, E:0.20, O:0.15, A:0.12, L:0.08},
+  Q: {U:0.90, I:0.03, A:0.02, E:0.02, O:0.01},
+  R: {E:0.30, O:0.20, A:0.15, I:0.12, S:0.08},
+  S: {T:0.30, H:0.20, E:0.15, O:0.12, I:0.10},
+  T: {H:0.55, O:0.20, I:0.10, A:0.08, E:0.07},
+  U: {R:0.25, S:0.20, T:0.18, N:0.12, L:0.10},
+  V: {E:0.50, I:0.20, A:0.12, O:0.08, U:0.05},
+  W: {A:0.25, I:0.22, H:0.18, O:0.15, E:0.10},
+  X: {P:0.30, T:0.20, I:0.18, C:0.12, A:0.08},
+  Y: {O:0.25, S:0.20, E:0.18, I:0.12, A:0.10},
+  Z: {E:0.40, A:0.20, O:0.15, I:0.10, Z:0.05},
+};
+
+// ── ADAPTATION HOOK ──────────────────────────────────────
+// To add user-adaptive frequencies:
+// 1. Track per-letter commit counts in a Map (letterCounts)
+// 2. After N commits, blend: effective_freq = α × user_freq + (1-α) × LETTER_FREQ
+// 3. Similarly for bigrams: track committed bigram pairs
+// 4. Expose setUserFrequencies(letterMap, bigramMap) method
+// 5. Persist via localStorage in the adapter
+// ─────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -168,6 +234,13 @@ export class SteerPopEngine {
     }
 
     this._rowCenters = rowCenters;
+  }
+
+  _getKeySpacing(row) {
+    const rowKeys = this._keysByRow.get(row);
+    if (!rowKeys || rowKeys.length < 2) return 55;
+    const sorted = rowKeys.slice().sort((a, b) => a.centerX - b.centerX);
+    return (sorted[sorted.length - 1].centerX - sorted[0].centerX) / (sorted.length - 1);
   }
 
   _gridLookup(x, row) {
@@ -291,6 +364,9 @@ export class SteerPopEngine {
     s.homeRow = hit.row;       // remember starting row for home bias
     s.hasLeftHome = false;     // track if user has visited another row
     s.swipeDirection = null;
+    s.lastSwitchTime = 0;
+    s.lastSwitchedFrom = null;
+    s.lastSwitchedFromPos = null;
 
     this._velocityBuffer = [{ x: p.x, y: p.y, t: p.timestamp }];
 
@@ -578,6 +654,8 @@ export class SteerPopEngine {
       confidence: s.confidence,
       confidenceZone: s.confidenceZone,
       momentum: s.momentum,
+      velocity: { x: s.velocity.x, y: s.velocity.y },
+      speed: s.speed,
       debugValues: this._debugValues(),
     };
   }
@@ -622,6 +700,10 @@ export class SteerPopEngine {
       // Momentum & linger
       momentum:                0,        // velocity * direction stability (0-1)
       lingerUntil:             0,        // timestamp until candidates are frozen after commit
+      // Sticky key behavior
+      lastSwitchTime:          0,        // timestamp of last topCandidate switch
+      lastSwitchedFrom:        null,     // key ID we just left
+      lastSwitchedFromPos:     null,     // {x, y} center of that key
     };
   }
 
@@ -695,9 +777,25 @@ export class SteerPopEngine {
 
     // Get keys in the swipe direction
     const crossRow = s.activeRow !== anchorKey.row;
+    const keySpacing = this._getKeySpacing(s.activeRow);
     let ordered;
-    if (crossRow) {
-      // Cross-row: no directional filter (stagger makes left/right unreliable)
+    if (crossRow && this.cfg.crossRowMode === 'railcar') {
+      // RAIL CAR: order keys from anchor's X outward in swipe direction
+      const homeX = anchorKey.centerX;
+      const tolerance = keySpacing * 0.3;
+      if (dir === 'right') {
+        ordered = warpedKeys.filter(k => k.centerX >= homeX - tolerance);
+        ordered.sort((a, b) => a.centerX - b.centerX);
+      } else if (dir === 'left') {
+        ordered = warpedKeys.filter(k => k.centerX <= homeX + tolerance);
+        ordered.sort((a, b) => b.centerX - a.centerX);
+      } else {
+        // Vertical only — all keys, sorted by distance from homeX
+        ordered = warpedKeys.slice();
+        ordered.sort((a, b) => Math.abs(a.centerX - homeX) - Math.abs(b.centerX - homeX));
+      }
+    } else if (crossRow) {
+      // RAY TRACE: no directional filter (stagger makes left/right unreliable)
       ordered = warpedKeys.slice();
     } else if (dir === 'right') {
       ordered = warpedKeys.filter(k => k.centerX > anchorKey.centerX);
@@ -720,27 +818,27 @@ export class SteerPopEngine {
     const adx = px - anchorKey.centerX;
     const ady = py - anchorKey.centerY;
 
-    // Compute key spacing for Gaussian normalization
-    const allRowKeys = this._keysByRow.get(s.activeRow);
-    let keySpacing = 55;
-    if (allRowKeys && allRowKeys.length >= 2) {
-      const sorted = allRowKeys.slice().sort((a, b) => a.centerX - b.centerX);
-      keySpacing = (sorted[sorted.length - 1].centerX - sorted[0].centerX) / (sorted.length - 1);
-    }
-
     // Momentum: boost keys aligned with velocity direction
     const mw = this.cfg.momentumWeight;
     const hasVel = s.speed > 1;
     const velNorm = hasVel ? vecNormalize(s.velocity.x, s.velocity.y) : { x: 0, y: 0 };
 
-    // Hot radius: force-lock threshold
+    // Hot radius: force-lock threshold (raytrace mode only)
     const hotDist = keySpacing * this.cfg.hotRadius;
 
     const scored = ordered.map((k, i) => {
       let score;
 
-      if (crossRow) {
-        // CROSS-ROW: ray projection from anchor through pointer to target row
+      if (crossRow && this.cfg.crossRowMode === 'railcar') {
+        // RAIL CAR: step-based from home position (key above/below anchor)
+        const homeX = anchorKey.centerX;
+        const swipeDist = Math.abs(adx);
+        const stepIndex = swipeDist / this.cfg.gridStepSize;
+        const keyDistFromHome = Math.abs(k.centerX - homeX) / keySpacing;
+        const indexDist = Math.abs(stepIndex - keyDistFromHome);
+        score = Math.exp(-indexDist * indexDist * 2.0);
+      } else if (crossRow) {
+        // RAY TRACE: angle-based projection from anchor through pointer to target row
         let hitX;
         if (Math.abs(ady) > 1) {
           const targetRowY = ordered[0].centerY;
@@ -754,19 +852,15 @@ export class SteerPopEngine {
         score = Math.exp(-normDist * normDist * 2.0);
       } else {
         // SAME-ROW: step-based indexing — swipe distance from anchor
-        // determines which key in sequence is active.
-        // Short swipe = 1st neighbor, longer = 2nd, etc.
-        // No need to physically reach the target key.
         const swipeDist = Math.abs(adx);
-        const stepIndex = swipeDist / this.cfg.gridStepSize; // continuous step position
-        // Key 0 (1st neighbor) peaks at step 1, key 1 at step 2, etc.
+        const stepIndex = swipeDist / this.cfg.gridStepSize;
         const indexDist = Math.abs(stepIndex - (i + 1));
         score = Math.exp(-indexDist * indexDist * 2.0);
       }
 
       // Hot radius: force-lock when pointer is very close to key center
-      // Only on cross-row — same-row uses step-based indexing instead
-      if (crossRow) {
+      // Only in raytrace mode — rail car and same-row use step-based indexing
+      if (crossRow && this.cfg.crossRowMode === 'raytrace') {
         const rawDist = dist(k.centerX, k.centerY, px, py);
         if (rawDist < hotDist) {
           score = 1.0;
@@ -778,6 +872,19 @@ export class SteerPopEngine {
         const toKey = vecNormalize(k.centerX - anchorKey.centerX, k.centerY - anchorKey.centerY);
         const alignment = Math.max(0, vecDot(velNorm.x, velNorm.y, toKey.x, toKey.y));
         score += mw * alignment * s.momentum;
+      }
+
+      // Frequency boost: common letters score higher
+      if (this.cfg.frequencyWeight > 0) {
+        score += this.cfg.frequencyWeight * (LETTER_FREQ[k.label] || 0);
+      }
+
+      // Bigram boost: letters likely to follow the last typed letter
+      if (this.cfg.bigramWeight > 0 && s.lastCommittedKey) {
+        const lastLabel = this._keyById.get(s.lastCommittedKey)?.label;
+        if (lastLabel && BIGRAM_NEXT[lastLabel]) {
+          score += this.cfg.bigramWeight * (BIGRAM_NEXT[lastLabel][k.label] || 0);
+        }
       }
 
       const brightness = Math.max(0.12, Math.min(1.0, score));
@@ -797,21 +904,28 @@ export class SteerPopEngine {
     // Take up to 8
     const chosen = scored.slice(0, this.cfg.candidateCount);
 
-    // Hysteresis — resist switching top candidate unless score margin is large enough
+    // Sticky key gate — resist switching unless all conditions are met
     const prevTop = s.topCandidate;
     if (chosen.length > 0) {
       const newTop = chosen[0].id;
       if (newTop !== prevTop) {
         const oldInList = chosen.find(c => c.id === prevTop);
-        if (oldInList && chosen[0].score - oldInList.score < this.cfg.hysteresis * 0.5) {
-          // Keep old top candidate — margin too small
+        const oldScore = oldInList ? oldInList.score : 0;
+
+        if (prevTop && !this._shouldSwitchTarget(newTop, chosen[0].score, prevTop, oldScore, timestamp)) {
+          // Keep old top candidate — switch conditions not met
           s.topCandidate = prevTop;
         } else {
+          // Switch approved
           if (prevTop) {
             s.lockedTarget = prevTop;
+            s.lastSwitchedFrom = prevTop;
+            const prevKey = this._keyById.get(prevTop);
+            s.lastSwitchedFromPos = prevKey ? { x: prevKey.centerX, y: prevKey.centerY } : null;
           }
           s.topCandidate = newTop;
           s.topCandidateSince = timestamp;
+          s.lastSwitchTime = timestamp;
           this._emit('target_changed', { target: newTop, from: prevTop }, timestamp);
         }
       }
@@ -873,13 +987,7 @@ export class SteerPopEngine {
     }
 
     // Compute horizontal spacing between adjacent keys on this row
-    const allRowKeys = this.geometry
-      .filter(k => !k.excluded && k.row === s.activeRow)
-      .sort((a, b) => a.centerX - b.centerX);
-    let keySpacing = 55;
-    if (allRowKeys.length >= 2) {
-      keySpacing = (allRowKeys[allRowKeys.length - 1].centerX - allRowKeys[0].centerX) / (allRowKeys.length - 1);
-    }
+    const keySpacing = this._getKeySpacing(s.activeRow);
 
     // ANGLE-BASED AIMING: score by proximity to where the user is pointing
     const px = s.pointerPosition.x;
@@ -899,13 +1007,26 @@ export class SteerPopEngine {
       }
 
       const pointerDist = Math.abs(k.centerX - aimX) / keySpacing;
-      const reachScore = Math.exp(-pointerDist * pointerDist * 2.0);
+      let score = Math.exp(-pointerDist * pointerDist * 2.0);
+
+      // Frequency boost
+      if (this.cfg.frequencyWeight > 0) {
+        score += this.cfg.frequencyWeight * (LETTER_FREQ[k.label] || 0);
+      }
+
+      // Bigram boost
+      if (this.cfg.bigramWeight > 0 && s.lastCommittedKey) {
+        const lastLabel = this._keyById.get(s.lastCommittedKey)?.label;
+        if (lastLabel && BIGRAM_NEXT[lastLabel]) {
+          score += this.cfg.bigramWeight * (BIGRAM_NEXT[lastLabel][k.label] || 0);
+        }
+      }
 
       return {
         id: k.id,
         label: k.label,
         dist: Math.abs(k.centerX - anchorKey.centerX),
-        score: reachScore,
+        score,
         brightness: 0,
         order: idx,
       };
@@ -922,20 +1043,26 @@ export class SteerPopEngine {
       c.brightness = Math.max(0.15, 1.0 - i * 0.15);
     });
 
-    // Hysteresis
+    // Sticky key gate — resist switching unless all conditions are met
     const prevTop = s.topCandidate;
     if (chosen.length > 0) {
       const newTop = chosen[0].id;
       if (newTop !== prevTop) {
         const oldInList = chosen.find(c => c.id === prevTop);
-        if (oldInList && chosen[0].score - oldInList.score < this.cfg.hysteresis * 0.5) {
+        const oldScore = oldInList ? oldInList.score : 0;
+
+        if (prevTop && !this._shouldSwitchTarget(newTop, chosen[0].score, prevTop, oldScore, timestamp)) {
           s.topCandidate = prevTop;
         } else {
           if (prevTop) {
             s.lockedTarget = prevTop;
+            s.lastSwitchedFrom = prevTop;
+            const prevKey = this._keyById.get(prevTop);
+            s.lastSwitchedFromPos = prevKey ? { x: prevKey.centerX, y: prevKey.centerY } : null;
           }
           s.topCandidate = newTop;
           s.topCandidateSince = timestamp;
+          s.lastSwitchTime = timestamp;
           this._emit('target_changed', { target: newTop, from: prevTop }, timestamp);
         }
       }
@@ -1039,6 +1166,72 @@ export class SteerPopEngine {
     if (s.confidence > 0.7) s.confidenceZone = 'hot';
     else if (s.confidence > 0.3) s.confidenceZone = 'warm';
     else s.confidenceZone = 'uncertain';
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // PRIVATE — sticky key switch gate
+  // ─────────────────────────────────────────────────────────
+
+  _shouldSwitchTarget(newTopId, newTopScore, oldTopId, oldTopScore, timestamp) {
+    const s = this._state;
+    const anchorKey = this._keyById.get(s.anchorKey);
+    const oldKey = this._keyById.get(oldTopId);
+    const isSameRow = oldKey && anchorKey && s.activeRow === anchorKey.row;
+
+    // ── SAME-ROW: simple score margin only ──────────────
+    // Step-based indexing already provides natural zones.
+    // Only gate: the score margin must exceed sameRowHysteresis.
+    if (isSameRow) {
+      return (newTopScore - oldTopScore) >= this.cfg.sameRowHysteresis;
+    }
+
+    // ── CROSS-ROW: full sticky gate system ──────────────
+
+    // Score margin
+    if (newTopScore - oldTopScore < this.cfg.hysteresis * 0.5) return false;
+
+    // Speed gate — slow movement = hold current key
+    if (s.speed < this.cfg.stickySpeedGate) return false;
+
+    // Switch cooldown — no rapid back-and-forth
+    if (s.lastSwitchTime > 0 && (timestamp - s.lastSwitchTime) < this.cfg.switchCooldownMs) {
+      return false;
+    }
+
+    // Direction gate — velocity must point toward new key
+    const newKey = this._keyById.get(newTopId);
+    if (newKey && oldKey && s.speed > 0) {
+      const velNorm = vecNormalize(s.velocity.x, s.velocity.y);
+      const toNew = vecNormalize(
+        newKey.centerX - oldKey.centerX,
+        newKey.centerY - oldKey.centerY
+      );
+      const alignment = vecDot(velNorm.x, velNorm.y, toNew.x, toNew.y);
+      if (alignment < this.cfg.stickyDirectionGate) return false;
+    }
+
+    // Exit distance — must be far enough from current key
+    if (oldKey) {
+      const pointerDistFromOld = dist(
+        s.pointerPosition.x, s.pointerPosition.y,
+        oldKey.centerX, oldKey.centerY
+      );
+      const keySpacing = this._getKeySpacing(s.activeRow);
+      const exitThreshold = keySpacing * this.cfg.stickyExitFraction;
+      if (pointerDistFromOld < exitThreshold) return false;
+    }
+
+    // Repeat guard — can't re-select a key we just left without moving away
+    if (newTopId === s.lastSwitchedFrom && s.lastSwitchedFromPos) {
+      const keySpacing = this._getKeySpacing(s.activeRow);
+      const distFromOldPos = dist(
+        s.pointerPosition.x, s.pointerPosition.y,
+        s.lastSwitchedFromPos.x, s.lastSwitchedFromPos.y
+      );
+      if (distFromOldPos < keySpacing * this.cfg.repeatGuardFraction) return false;
+    }
+
+    return true;
   }
 
   // ─────────────────────────────────────────────────────────
@@ -1213,6 +1406,11 @@ export class SteerPopEngine {
     s.flickCooldownUntil = timestamp + this.cfg.flickCooldownMs;
     s.lingerUntil = timestamp + this.cfg.lingerMs;
     this._velocityBuffer = [];
+
+    // Sticky key: clear guard state (user stays on anchor)
+    s.lastSwitchTime = 0;
+    s.lastSwitchedFrom = null;
+    s.lastSwitchedFromPos = null;
   }
 
   // ─────────────────────────────────────────────────────────
@@ -1270,6 +1468,11 @@ export class SteerPopEngine {
 
     // Reset velocity buffer to prevent double-flick
     this._velocityBuffer = [];
+
+    // Sticky key: committed key becomes "last switched from" for repeat guard
+    s.lastSwitchTime = 0;
+    s.lastSwitchedFrom = keyId;
+    s.lastSwitchedFromPos = { x: key.centerX, y: key.centerY };
   }
 
   // ─────────────────────────────────────────────────────────
